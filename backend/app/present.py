@@ -35,6 +35,7 @@ def settings_out(row: Settings) -> SettingsOut:
         risk_percent=row.risk_percent,
         max_lot=row.max_lot,
         planning_balance=row.planning_balance,
+        max_open_trades=int(getattr(row, "max_open_trades", 3) or 3),
         enabled_symbols=split_ids(row.enabled_symbols),
         alias_overrides=row.alias_overrides or "",
         onboarding_done=row.onboarding_done,

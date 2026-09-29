@@ -16,6 +16,7 @@ export function Setup() {
   const [risk, setRisk] = useState(me?.settings.risk_percent ?? 0.5);
   const [balance, setBalance] = useState(me?.settings.planning_balance ?? 1000);
   const [maxLot, setMaxLot] = useState(me?.settings.max_lot ?? 0.5);
+  const [maxOpen, setMaxOpen] = useState(me?.settings.max_open_trades ?? 3);
   const [accepted, setAccepted] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -41,6 +42,7 @@ export function Setup() {
         risk_percent: risk,
         max_lot: maxLot,
         planning_balance: balance,
+        max_open_trades: Math.min(5, Math.max(1, Math.round(maxOpen) || 3)),
         enabled_symbols: me.settings.enabled_symbols,
         alias_overrides: me.settings.alias_overrides,
         onboarding_done: true,
@@ -128,8 +130,13 @@ export function Setup() {
             <span>Maximum size, in lots on this account</span>
             <input type="number" min={0.01} max={100} step="0.01" value={maxLot} onChange={(e) => setMaxLot(Number(e.target.value))} />
           </label>
+          <label className="field">
+            <span>Automatic trades open at once, {maxOpen}</span>
+            <input type="range" min={1} max={5} step={1} value={maxOpen} onChange={(e) => setMaxOpen(Number(e.target.value))} />
+          </label>
           <p className="lede">
             On {money(balance || 0)}, {risk.toFixed(1)}% is {money(riskCash || 0)}. That is the most the desk will aim to lose if the stop is hit.
+            Automatic accounts stop at {maxOpen} open trades. Every signal still goes to Telegram.
           </p>
         </>
       ) : null}

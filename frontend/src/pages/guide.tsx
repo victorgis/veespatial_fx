@@ -89,9 +89,17 @@ export function Guide() {
         <article className="card">
           <h2>How a signal is chosen</h2>
           <p>
-            On the last closed hourly candle, a buy is published when the 20-hour average crosses above the 50-hour
-            average, the 50-hour average is above the 200-hour average, and RSI is between 45 and 75. A sell mirrors
-            that. The stop is 1.5 times the recent hourly range. The target is twice as far as the stop.
+            A signal is a 5-minute pullback inside the current trend. The 1-hour chart has to agree: price and the
+            50-hour average on the same side of the 200-hour average. The 15-minute swings have to make higher highs
+            and higher lows for a buy, or the mirror for a sell. On the 5-minute candle, RSI sits in a pullback band
+            and is turning, MACD momentum is turning with the trend, and price has closed back through the 50-bar
+            average without running away from it. The stop is beyond that recent swing. The target is 1.8 times as
+            far as the stop. A fresh 1-minute candle has to close the same way.
+          </p>
+          <p>
+            Every signal is posted to Telegram as soon as the candle closes. An automatic account does not take all
+            of them: three open automatic trades is the usual limit, and five is the most. The rest stay on the
+            channel and on this desk for you to place by hand.
           </p>
           <p className="help">
             Prices come from Dukascopy’s public bid feed. WTI and Brent there are cash CFDs, so they can differ from

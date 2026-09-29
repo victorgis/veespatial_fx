@@ -19,6 +19,8 @@ def settings_error(body: SettingsIn) -> str | None:
         return "Risk per trade must be between 0.1% and 5%."
     if not (0.01 <= body.max_lot <= 100):
         return "The maximum size must be between 0.01 and 100 lots."
+    if type(body.max_open_trades) is not int or not (1 <= body.max_open_trades <= 5):
+        return "Open automatic trades must be a whole number from 1 to 5."
     if body.planning_balance < 0 or body.planning_balance > 100_000_000:
         return "Enter a planning balance of zero or more."
     if body.onboarding_done and not body.risk_accepted:

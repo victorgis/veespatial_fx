@@ -84,10 +84,26 @@ def session_scope() -> Session:
     return maker()
 
 
+def _ensure_max_open_trades() -> None:
+    """create_all does not add columns to a table that already exists."""
+    from sqlalchemy import inspect, text
+
+    engine = get_engine()
+    insp = inspect(engine)
+    if "settings" not in insp.get_table_names():
+        return
+    columns = {column["name"] for column in insp.get_columns("settings")}
+    if "max_open_trades" in columns:
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE settings ADD COLUMN max_open_trades INTEGER NOT NULL DEFAULT 3"))
+
+
 def init_db() -> None:
     from app import models  # noqa: F401
 
     Base.metadata.create_all(get_engine())
+    _ensure_max_open_trades()
     db = session_scope()
     try:
         models.ensure_bot_config(db)

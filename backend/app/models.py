@@ -55,6 +55,7 @@ class Settings(Base):
     platform: Mapped[str] = mapped_column(String(16), default="mt5")
     risk_percent: Mapped[float] = mapped_column(Float, default=0.5)
     max_lot: Mapped[float] = mapped_column(Float, default=0.5)
+    max_open_trades: Mapped[int] = mapped_column(Integer, default=3)
     planning_balance: Mapped[float] = mapped_column(Float, default=1000)
     enabled_symbols: Mapped[str] = mapped_column(Text, default=",".join(ALL_IDS))
     alias_overrides: Mapped[str] = mapped_column(Text, default="")
@@ -177,6 +178,7 @@ def new_settings(user_id: int) -> Settings:
         platform="mt5",
         risk_percent=0.5,
         max_lot=0.5,
+        max_open_trades=3,
         planning_balance=1000,
         enabled_symbols=",".join(ALL_IDS),
         alias_overrides="",

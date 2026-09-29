@@ -44,6 +44,8 @@ export function deliveryLabel(status: string | null): string {
       return "You skipped this";
     case "off":
       return "Turned off for you";
+    case "capped":
+      return "At your open-trade limit";
     default:
       return status || "Open";
   }

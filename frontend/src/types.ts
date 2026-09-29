@@ -5,6 +5,7 @@ export type Settings = {
   risk_percent: number;
   max_lot: number;
   planning_balance: number;
+  max_open_trades: number;
   enabled_symbols: string[];
   alias_overrides: string;
   onboarding_done: boolean;

@@ -42,6 +42,7 @@ class SettingsIn(BaseModel):
     onboarding_done: bool
     risk_accepted: bool
     trust_platform_size: bool = False
+    max_open_trades: int = 3
 
 
 class SettingsOut(BaseModel):
@@ -56,6 +57,7 @@ class SettingsOut(BaseModel):
     onboarding_done: bool
     risk_accepted: bool
     trust_platform_size: bool
+    max_open_trades: int
     ea_key_prefix: str | None
 
 

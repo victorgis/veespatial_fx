@@ -23,7 +23,7 @@ class FakeMarket:
         return FetchResult([bar], "test")
 
 
-def _draft(bars, spec, params=None):  # type: ignore[no-untyped-def]
+def _draft(bars, spec, params=None, **_kwargs):  # type: ignore[no-untyped-def]
     if spec.id != "eurusd":
         return None
     # Far enough apart that the cooldown between signals does not swallow the second one.
@@ -245,6 +245,83 @@ def test_mismatch_pauses_and_does_not_resume(client, monkeypatch):
     assert home["me"]["connection"]["mismatch"] is False
     resumed_body = resumed.text.split("---", 1)[1]
     assert f"{old_id}|" not in resumed_body
+
+
+def test_automatic_cap_keeps_extra_signals_on_telegram(client, monkeypatch):
+    set_market_override(FakeMarket())
+    sent: list[str] = []
+
+    def _many(bars, spec, params=None, **_kwargs):  # type: ignore[no-untyped-def]
+        if spec.id not in ("eurusd", "gbpusd", "usdjpy", "usdchf"):
+            return None
+        return SignalDraft("buy", 1.10, 1.09, 1.12, 0.00667, 48.0, datetime(2026, 3, 2, 12, tzinfo=timezone.utc))
+
+    monkeypatch.setattr("app.scan.evaluate", _many)
+    monkeypatch.setattr("app.scan.telegram_send", lambda text: sent.append(text) or True)
+    auto = _auth(client, "auto-cap@example.com")
+    manual = _auth(client, "hand-cap@example.com")
+    rejected = client.put(
+        "/api/settings",
+        json={
+            "trade_mode": "auto",
+            "account_type": "standard",
+            "platform": "mt5",
+            "risk_percent": 1,
+            "max_lot": 1,
+            "planning_balance": 10000,
+            "enabled_symbols": list(ALL_IDS),
+            "onboarding_done": True,
+            "risk_accepted": True,
+            "max_open_trades": 6,
+        },
+        headers=auto,
+    )
+    assert rejected.status_code == 400
+    saved = _save(
+        client,
+        auto,
+        trade_mode="auto",
+        account_type="standard",
+        max_lot=1,
+        planning_balance=10000,
+        max_open_trades=3,
+    )
+    _save(client, manual, trade_mode="manual", account_type="micro")
+    scanned = client.post("/api/system/scan", headers=auto)
+    assert scanned.status_code == 200, scanned.text
+    assert scanned.json()["signals_created"] == 4
+    assert len(sent) == 4
+
+    auto_home = client.get("/api/dashboard", headers=auto).json()
+    auto_status = sorted(row["delivery_status"] for row in auto_home["signals"])
+    assert auto_status.count("queued") == 3
+    assert auto_status.count("capped") == 1
+    specs = "\n".join(
+        f"spec={name}|100000|0.00001|1|0.01|50|0.01|5|1.10000|1.10002"
+        for name in ("EURUSD", "GBPUSD", "USDJPY", "USDCHF")
+    )
+    beat = "\n".join(
+        [
+            "platform=mt5",
+            "login=12345678",
+            "broker=XMTrading-MT5",
+            "balance=10000",
+            "equity=10000",
+            "currency=USD",
+            "fx_contract=100000",
+            "fx_symbol=EURUSD",
+            specs,
+        ]
+    )
+    hb = client.post("/api/ea/heartbeat", content=beat, headers={"X-Api-Key": saved["ea_key"]})
+    assert hb.status_code == 200, hb.text
+    orders = client.get("/api/ea/orders", headers={"X-Api-Key": saved["ea_key"]})
+    placed = [line for line in orders.text.split("---", 1)[1].splitlines() if line.strip()]
+    assert len(placed) == 3
+
+    manual_home = client.get("/api/dashboard", headers=manual).json()
+    assert {row["delivery_status"] for row in manual_home["signals"]} == {"for_you"}
+    assert len(manual_home["signals"]) == 4
 
 
 def test_order_formatter_and_copier_files():

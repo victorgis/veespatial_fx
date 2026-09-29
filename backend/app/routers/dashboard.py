@@ -11,7 +11,7 @@ from app.security import current_user
 
 router = APIRouter(prefix="/api", tags=["dashboard"])
 
-_OPEN = ("queued", "for_you", "paused", "placed", "not_placed")
+_OPEN = ("queued", "for_you", "paused", "placed", "not_placed", "capped")
 
 
 def _load(db: Session, user: User) -> Settings:

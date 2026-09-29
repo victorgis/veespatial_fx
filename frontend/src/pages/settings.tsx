@@ -45,6 +45,7 @@ export function SettingsPage() {
         risk_percent: Number(current.risk_percent),
         max_lot: Number(current.max_lot),
         planning_balance: Number(current.planning_balance),
+        max_open_trades: Math.min(5, Math.max(1, Math.round(Number(current.max_open_trades) || 3))),
         enabled_symbols: current.enabled_symbols,
         alias_overrides: current.alias_overrides,
         onboarding_done: true,
@@ -116,6 +117,18 @@ export function SettingsPage() {
             <span>Maximum lots on this account</span>
             <input type="number" min={0.01} max={100} step={0.01} value={form.max_lot} onChange={(e) => patch({ max_lot: Number(e.target.value) })} />
           </label>
+          <label className="field">
+            <span>Automatic trades open at once</span>
+            <input
+              type="number"
+              min={1}
+              max={5}
+              step={1}
+              value={form.max_open_trades ?? 3}
+              onChange={(e) => patch({ max_open_trades: Number(e.target.value) })}
+            />
+          </label>
+          <p className="help">3 is the usual number, and 5 is the most. Further signals still go to Telegram immediately. They are not sent to the platform until an automatic trade closes.</p>
         </section>
         <section className="card">
           <h2>Markets you trade</h2>

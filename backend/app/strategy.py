@@ -1,18 +1,21 @@
-"""Hourly trend-cross strategy.
+"""Signal rules.
 
-A buy is taken on the last *closed* hourly candle when:
-- the fast average crosses above the slow average on that candle,
-- the slow average is above the long average,
-- RSI sits in the middle of its range (the cross is not an exhausted spike).
+The desk publishes a 5-minute pullback inside a higher-timeframe trend.
+The 1-hour chart has to agree (price and the 50-hour average on the same
+side of the 200-hour average). The 15-minute swings have to agree, or at
+least not contradict. The 5-minute candle times the entry: RSI in a
+pullback band and turning, MACD momentum turning with the trend, and the
+close back through the 50-bar average without being extended. The stop sits
+beyond the recent 5-minute swing. The target is 1.8 times that distance.
 
-The sell rules mirror that. The stop is 1.5× ATR. The target is twice the
-stop distance (3× ATR). Decisions use closed candles only.
+`decide`, `levels`, and `evaluate` are the older hourly cross. They stay so
+their tests stay, and the scan does not call them.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from app.symbols import Symbol
 
@@ -192,3 +195,414 @@ def bar_hit(side: str, sl: float, tp: float, high: float, low: float) -> str | N
     if low <= tp:
         return "target"
     return None
+
+
+@dataclass(frozen=True)
+class IntradayParams:
+    rsi_n: int = 14
+    atr_n: int = 14
+    ma50: int = 50
+    ema_hour: int = 50
+    ema_trend: int = 200
+    macd_fast: int = 12
+    macd_slow: int = 26
+    macd_signal: int = 9
+    swing_wing: int = 2
+    buy_rsi: tuple[float, float] = (40, 58)
+    sell_rsi: tuple[float, float] = (42, 60)
+    min_stop_atr: float = 0.8
+    max_stop_atr: float = 2.0
+    target_r: float = 1.8
+
+
+@dataclass(frozen=True)
+class Structure:
+    kind: str
+    label: str
+    last_low: float | None
+    last_high: float | None
+    higher_low: bool
+    lower_high: bool
+
+
+@dataclass(frozen=True)
+class Decision:
+    draft: SignalDraft | None
+    log_line: str
+
+
+def macd(
+    values: list[float], fast: int = 12, slow: int = 26, signal: int = 9
+) -> tuple[list[float | None], list[float | None], list[float | None]]:
+    """MACD line, signal line, and histogram. None until each average exists."""
+    fast_ema = ema(values, fast)
+    slow_ema = ema(values, slow)
+    line: list[float | None] = [None] * len(values)
+    for i, (fast_v, slow_v) in enumerate(zip(fast_ema, slow_ema)):
+        if fast_v is not None and slow_v is not None:
+            line[i] = fast_v - slow_v
+    first = next((i for i, value in enumerate(line) if value is not None), None)
+    sig: list[float | None] = [None] * len(values)
+    hist: list[float | None] = [None] * len(values)
+    if first is None:
+        return line, sig, hist
+    seeded = ema([value for value in line[first:] if value is not None], signal)
+    for offset, value in enumerate(seeded):
+        idx = first + offset
+        sig[idx] = value
+        if value is not None and line[idx] is not None:
+            hist[idx] = line[idx] - value
+    return line, sig, hist
+
+
+def swing_points(bars: list[Bar], wing: int = 2) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
+    """Confirmed swing highs and swing lows. A point needs `wing` bars on each side."""
+    highs: list[tuple[int, float]] = []
+    lows: list[tuple[int, float]] = []
+    if wing < 1 or len(bars) < wing * 2 + 1:
+        return highs, lows
+    for i in range(wing, len(bars) - wing):
+        others_h = [bars[j].high for j in range(i - wing, i + wing + 1) if j != i]
+        others_l = [bars[j].low for j in range(i - wing, i + wing + 1) if j != i]
+        if bars[i].high > max(others_h):
+            highs.append((i, bars[i].high))
+        if bars[i].low < min(others_l):
+            lows.append((i, bars[i].low))
+    return highs, lows
+
+
+def structure_of(bars: list[Bar], wing: int = 2) -> Structure:
+    highs, lows = swing_points(bars, wing)
+    last_high = highs[-1][1] if highs else None
+    prev_high = highs[-2][1] if len(highs) >= 2 else None
+    last_low = lows[-1][1] if lows else None
+    prev_low = lows[-2][1] if len(lows) >= 2 else None
+    higher_high = prev_high is not None and last_high is not None and last_high > prev_high
+    lower_high = prev_high is not None and last_high is not None and last_high < prev_high
+    higher_low = prev_low is not None and last_low is not None and last_low > prev_low
+    lower_low = prev_low is not None and last_low is not None and last_low < prev_low
+    if higher_high and higher_low:
+        return Structure("up", "HH/HL", last_low, last_high, True, False)
+    if lower_high and lower_low:
+        return Structure("down", "LH/LL", last_low, last_high, False, True)
+    if len(highs) < 2 or len(lows) < 2:
+        return Structure("unclear", "unclear", last_low, last_high, higher_low, lower_high)
+    return Structure("mixed", "mixed", last_low, last_high, higher_low, lower_high)
+
+
+def structure_allows(structure: Structure, side: str) -> bool:
+    if side == "buy":
+        return structure.kind == "up" or (structure.kind == "mixed" and structure.higher_low)
+    if side == "sell":
+        return structure.kind == "down" or (structure.kind == "mixed" and structure.lower_high)
+    return False
+
+
+def stop_distance(
+    side: str,
+    entry: float,
+    swing: float,
+    atr_value: float,
+    pip: float,
+    params: IntradayParams | None = None,
+) -> float | None:
+    """Distance from entry to a stop beyond the swing.
+
+    A stop tighter than 0.8× ATR is widened to that floor so the spread does
+    not take it immediately. A swing farther than 2× ATR is skipped: clamping
+    it would hide the stop inside the swing.
+    """
+    params = params or IntradayParams()
+    if atr_value <= 0:
+        return None
+    buffer = max(pip, atr_value * 0.05)
+    if side == "buy":
+        distance = entry - (swing - buffer)
+    else:
+        distance = (swing + buffer) - entry
+    if distance <= 0:
+        return None
+    if distance < atr_value * params.min_stop_atr:
+        return atr_value * params.min_stop_atr
+    if distance > atr_value * params.max_stop_atr:
+        return None
+    return distance
+
+
+def _intraday_params(params: StrategyParams | IntradayParams | None) -> IntradayParams:
+    if isinstance(params, IntradayParams):
+        return params
+    base = IntradayParams()
+    if isinstance(params, StrategyParams):
+        return IntradayParams(rsi_n=params.rsi_n, atr_n=params.atr_n)
+    return base
+
+
+def _stamp(when: datetime | None) -> str:
+    if when is None:
+        return "--:--"
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when.astimezone(timezone.utc).strftime("%H:%M")
+
+
+def _check_line(
+    display: str,
+    when: datetime | None,
+    trend: str,
+    rsi_txt: str,
+    ma50_txt: str,
+    ema200_txt: str,
+    macd_txt: str,
+    structure: str,
+    verdict: str,
+) -> str:
+    return (
+        f"{display} 5m {_stamp(when)} UTC | {trend} | RSI {rsi_txt} | MA50 {ma50_txt} | "
+        f"EMA200 {ema200_txt} | MACD {macd_txt} | 15m {structure} | {verdict}"
+    )
+
+
+def _rsi_txt(cur: float | None, prev: float | None) -> str:
+    if cur is None:
+        return "—"
+    if prev is None or abs(cur - prev) <= 0.05:
+        direction = "flat"
+    elif cur > prev:
+        direction = "rising"
+    else:
+        direction = "falling"
+    return f"{cur:.0f} {direction}"
+
+
+def _macd_txt(hist: float | None, prev: float | None, line: float | None, signal: float | None) -> str:
+    if hist is None or prev is None:
+        return "—"
+    if hist > prev:
+        direction = "rising"
+    elif hist < prev:
+        direction = "falling"
+    else:
+        direction = "flat"
+    if line is None or signal is None:
+        return direction
+    if line > signal:
+        place = "above signal"
+    elif line < signal:
+        place = "below signal"
+    else:
+        place = "on signal"
+    return f"{direction}, {place}"
+
+
+def _levels_r(side: str, entry: float, distance: float, digits: int, target_r: float) -> tuple[float, float] | None:
+    if distance <= 0:
+        return None
+    if side == "buy":
+        sl = round_price(entry - distance, digits)
+        tp = round_price(entry + distance * target_r, digits)
+        if sl >= entry or tp <= entry:
+            return None
+        return sl, tp
+    sl = round_price(entry + distance, digits)
+    tp = round_price(entry - distance * target_r, digits)
+    if sl <= entry or tp >= entry:
+        return None
+    return sl, tp
+
+
+def _recent_swing(bars: list[Bar], side: str, wing: int) -> float:
+    """Extreme of this candle and the two before it.
+
+    A scalp stop belongs beyond that immediate swing. The whole pullback leg
+    is often several ranges away, and hiding the stop inside it is worse than
+    skipping a bar whose own range is already too wide.
+    """
+    del wing
+    last = len(bars) - 1
+    window = bars[max(0, last - 2) : last + 1]
+    if side == "buy":
+        return min(bar.low for bar in window)
+    return max(bar.high for bar in window)
+
+
+def _minute_confirms(side: str, m1: list[Bar] | None, now: datetime) -> bool:
+    """A fresh 1-minute bar has to close with the trade. A missing or old one does not block."""
+    if not m1:
+        return True
+    last = m1[-1]
+    when = last.time if last.time.tzinfo else last.time.replace(tzinfo=timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    if now.astimezone(timezone.utc) - when.astimezone(timezone.utc) > timedelta(minutes=3):
+        return True
+    if side == "buy":
+        return last.close > last.open
+    return last.close < last.open
+
+
+def _hourly_bias(hourly: list[Bar] | None, price: float, params: IntradayParams) -> tuple[str | None, str]:
+    """Return 'buy', 'sell', or None, plus the EMA200 column text.
+
+    'short' in the text means the hourly history itself is too short to judge.
+    """
+    if not hourly or len(hourly) < params.ema_trend:
+        return None, "not ready"
+    closes = [bar.close for bar in hourly]
+    mid = ema(closes, params.ema_hour)
+    trend = ema(closes, params.ema_trend)
+    i = len(closes) - 1
+    if mid[i] is None or trend[i] is None:
+        return None, "not ready"
+    ema50 = mid[i]
+    ema200 = trend[i]
+    assert ema50 is not None and ema200 is not None
+    if price > ema200 and ema50 > ema200:
+        return "buy", "close above, EMA50 above"
+    if price < ema200 and ema50 < ema200:
+        return "sell", "close below, EMA50 below"
+    return None, "flat"
+
+
+def evaluate_intraday(
+    bars: list[Bar],
+    spec: Symbol,
+    params: StrategyParams | IntradayParams | None = None,
+    hourly: list[Bar] | None = None,
+    m15: list[Bar] | None = None,
+    m1: list[Bar] | None = None,
+    now: datetime | None = None,
+) -> Decision:
+    """Judge the last closed 5-minute candle. Always returns a log line."""
+    tuned = _intraday_params(params)
+    now = now or datetime.now(timezone.utc)
+    when = bars[-1].time if bars else None
+    need = max(tuned.ma50, tuned.macd_slow + tuned.macd_signal, tuned.rsi_n, tuned.atr_n) + 2
+    if len(bars) < need:
+        line = _check_line(
+            spec.display, when, "1h waiting", "—", "—", "—", "—", "—",
+            f"no entry: need {need} closed 5-minute candles (have {len(bars)})",
+        )
+        return Decision(None, line)
+
+    closes = [bar.close for bar in bars]
+    ma50 = ema(closes, tuned.ma50)
+    rsi_v = rsi(closes, tuned.rsi_n)
+    atr_v = atr(bars, tuned.atr_n)
+    macd_line, macd_sig, macd_hist = macd(closes, tuned.macd_fast, tuned.macd_slow, tuned.macd_signal)
+    i = len(bars) - 1
+    cur_ma = ma50[i]
+    prev_ma = ma50[i - 1]
+    cur_rsi = rsi_v[i]
+    prev_rsi = rsi_v[i - 1]
+    cur_atr = atr_v[i]
+    cur_hist = macd_hist[i]
+    prev_hist = macd_hist[i - 1]
+    cur_macd = macd_line[i]
+    cur_sig = macd_sig[i]
+    rsi_txt = _rsi_txt(cur_rsi, prev_rsi)
+    macd_txt = _macd_txt(cur_hist, prev_hist, cur_macd, cur_sig)
+    if cur_ma is None:
+        ma_txt = "—"
+    elif closes[i] > cur_ma:
+        ma_txt = "close above"
+    elif closes[i] < cur_ma:
+        ma_txt = "close below"
+    else:
+        ma_txt = "close on"
+
+    if None in (cur_ma, prev_ma, cur_rsi, prev_rsi, cur_atr, cur_hist, prev_hist, cur_macd, cur_sig):
+        line = _check_line(
+            spec.display, when, "1h waiting", rsi_txt, ma_txt, "—", macd_txt, "—",
+            "no entry: 5-minute averages are not ready",
+        )
+        return Decision(None, line)
+    assert cur_ma is not None and cur_rsi is not None and prev_rsi is not None
+    assert cur_atr is not None and cur_hist is not None and prev_hist is not None
+    assert cur_macd is not None and cur_sig is not None
+
+    if cur_atr <= 0 or cur_atr > closes[i] * 0.15:
+        line = _check_line(
+            spec.display, when, "1h waiting", rsi_txt, ma_txt, "—", macd_txt, "—",
+            "no entry: the 5-minute range is not usable",
+        )
+        return Decision(None, line)
+
+    bias, ema_txt = _hourly_bias(hourly, closes[i], tuned)
+    if not hourly or len(hourly) < tuned.ema_trend:
+        trend_txt = "1h not ready"
+    elif bias == "buy":
+        trend_txt = "1h uptrend"
+    elif bias == "sell":
+        trend_txt = "1h downtrend"
+    else:
+        trend_txt = "1h flat"
+
+    structure = structure_of(m15 or [], tuned.swing_wing)
+    struct_txt = structure.label
+
+    def finish(verdict: str, draft: SignalDraft | None = None) -> Decision:
+        return Decision(
+            draft,
+            _check_line(spec.display, when, trend_txt, rsi_txt, ma_txt, ema_txt, macd_txt, struct_txt, verdict),
+        )
+
+    if trend_txt == "1h not ready":
+        return finish("no entry: 1-hour trend is not ready")
+    if bias is None:
+        return finish("no entry: 1-hour trend is flat")
+    side = bias
+    if not structure_allows(structure, side):
+        return finish(f"no entry: 15-minute structure is {structure.label}")
+
+    lo, hi = tuned.buy_rsi if side == "buy" else tuned.sell_rsi
+    if not (lo <= cur_rsi <= hi):
+        return finish(f"no entry: RSI {cur_rsi:.0f} is outside {lo:.0f}-{hi:.0f}")
+    if side == "buy" and cur_rsi <= prev_rsi:
+        return finish("no entry: RSI is not rising")
+    if side == "sell" and cur_rsi >= prev_rsi:
+        return finish("no entry: RSI is not falling")
+
+    # The turn often prints while the line is still the other side of the signal.
+    # What matters is the histogram turning with the trend. The log still names
+    # whether the line is above or below the signal.
+    hist_with = (cur_hist > prev_hist) if side == "buy" else (cur_hist < prev_hist)
+    if not hist_with:
+        return finish("no entry: MACD momentum is not with the trend")
+
+    touch = max(spec.pip, cur_atr * 0.15)
+    prev_close = closes[i - 1]
+    bar = bars[i]
+    if side == "buy":
+        reclaimed = bar.close > cur_ma and (bar.low <= cur_ma + touch or prev_close <= cur_ma)
+    else:
+        reclaimed = bar.close < cur_ma and (bar.high >= cur_ma - touch or prev_close >= cur_ma)
+    if not reclaimed:
+        return finish("no entry: price has not closed back through MA50")
+    if abs(bar.close - cur_ma) > cur_atr * 1.25:
+        return finish("no entry: price is extended beyond MA50")
+
+    if side == "buy":
+        if structure.last_low is None or bar.close <= structure.last_low:
+            return finish("no entry: demand has not held")
+    else:
+        if structure.last_high is None or bar.close >= structure.last_high:
+            return finish("no entry: supply has not held")
+    swing = _recent_swing(bars, side, tuned.swing_wing)
+
+    if not _minute_confirms(side, m1, now):
+        return finish("no entry: the 1-minute candle does not confirm")
+
+    entry = round_price(bar.close, spec.digits)
+    distance = stop_distance(side, entry, swing, cur_atr, spec.pip, tuned)
+    if distance is None:
+        raw = entry - swing if side == "buy" else swing - entry
+        if raw > cur_atr * tuned.max_stop_atr:
+            return finish("no entry: the stop would be wider than 2 times the 5-minute range")
+        return finish("no entry: the swing does not give a stop")
+    built = _levels_r(side, entry, distance, spec.digits, tuned.target_r)
+    if built is None:
+        return finish("no entry: the stop rounded onto the entry")
+    sl, tp = built
+    draft = SignalDraft(side, entry, sl, tp, cur_atr, cur_rsi, bar.time)
+    return finish(f"entry: {side}, stop beyond the swing, target {tuned.target_r:g} times the stop", draft)

@@ -19,9 +19,12 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/app.db"
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
     scheduler_enabled: bool = True
-    scan_interval_seconds: int = 900
-    signal_expiry_hours: int = 72
+    # A closed 5-minute candle should be seen within a minute.
+    scan_interval_seconds: int = 60
+    signal_expiry_hours: int = 6
+    # Kept so an old environment variable does not crash. The scan uses minutes.
     min_hours_between: int = 6
+    min_minutes_between: int = 15
     telegram_bot_token: str = ""
     telegram_channel_id: str = ""
     cron_key: str = ""

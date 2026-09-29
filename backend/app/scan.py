@@ -12,8 +12,8 @@ from app.config import get_settings
 from app.database import session_scope
 from app.market import get_market
 from app.models import BotConfig, Delivery, LastPrice, ScanRun, Settings, Signal, User, utcnow
-from app.strategy import bar_hit, evaluate
-from app.strategy import StrategyParams
+from app.strategy import SignalDraft, StrategyParams, bar_hit
+from app.strategy import evaluate_intraday as evaluate
 from app.symbols import get_symbol
 from app.telegram_svc import send as telegram_send
 from app.wording import close_message, rationale, telegram_message
@@ -43,7 +43,33 @@ def _watched_ids(db) -> list[str]:  # type: ignore[no-untyped-def]
     return [p.strip() for p in row.enabled_symbols.split(",") if p.strip() and get_symbol(p.strip())]
 
 
-def _delivery_status(user_settings: Settings, spec_id: str, spec_mt5_only: bool) -> tuple[str, str]:
+def open_trade_limit(value: int | None) -> int:
+    """Automatic accounts stay between 1 and 5 open trades. 3 is the usual number."""
+    try:
+        parsed = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 3
+    if parsed < 1:
+        return 1
+    if parsed > 5:
+        return 5
+    return parsed
+
+
+def _open_auto_count(db, user_id: int) -> int:  # type: ignore[no-untyped-def]
+    return (
+        db.query(Delivery)
+        .join(Signal, Delivery.signal_id == Signal.id)
+        .filter(
+            Delivery.user_id == user_id,
+            Delivery.status.in_(("queued", "paused", "placed")),
+            Signal.status == "active",
+        )
+        .count()
+    )
+
+
+def _delivery_status(user_settings: Settings, spec_id: str, spec_mt5_only: bool, open_auto: int) -> tuple[str, str]:
     enabled = {p.strip() for p in (user_settings.enabled_symbols or "").split(",") if p.strip()}
     if spec_id not in enabled:
         return "off", "This market is turned off on your account."
@@ -53,7 +79,21 @@ def _delivery_status(user_settings: Settings, spec_id: str, spec_mt5_only: bool)
         return "for_you", "The XM app cannot attach the copier. Place this yourself."
     if spec_mt5_only and user_settings.platform == "mt4":
         return "not_placed", "This cash market is on MT5 at XM. It was not sent to MT4."
+    limit = open_trade_limit(getattr(user_settings, "max_open_trades", 3))
+    if open_auto >= limit:
+        return (
+            "capped",
+            f"You already have {limit} automatic trades open. This signal is on Telegram for you to place by hand.",
+        )
     return "queued", "Waiting for your platform."
+
+
+def _split_decision(checked: object) -> tuple[SignalDraft | None, str | None]:
+    if isinstance(checked, SignalDraft):
+        return checked, None
+    if checked is None:
+        return None, None
+    return getattr(checked, "draft", None), getattr(checked, "log_line", None)
 
 
 def _announce(db, spec, signal: Signal) -> bool:  # type: ignore[no-untyped-def]
@@ -98,6 +138,7 @@ def _resolve(signal: Signal, bars, now: datetime, expiry_hours: int) -> tuple[st
 
 def run_scan() -> dict:
     if not _lock.acquire(blocking=False):
+        log.info("Scan skipped, the previous pass is still running")
         return {"status": "busy", "message": "A scan is already running.", "signals_created": 0}
     try:
         return _run()
@@ -140,6 +181,7 @@ def _run() -> dict:
     params = params_from_settings()
     fetched = {}
     failures: list[str] = []
+    log.info("Scan started for %s markets", len(ids))
     try:
         for symbol_id in ids:
             spec = get_symbol(symbol_id)
@@ -147,8 +189,17 @@ def _run() -> dict:
                 continue
             result = market.fetch(spec)
             fetched[symbol_id] = result
-            if result.error or not result.bars:
-                failures.append(result.error or f"{spec.display}: no candles")
+            if result.bars:
+                log.info(
+                    "%s: %s closed 5-minute candles through %s UTC",
+                    spec.display,
+                    len(result.bars),
+                    result.bars[-1].time.strftime("%H:%M"),
+                )
+            if result.error:
+                failures.append(result.error)
+            elif not result.bars and not result.hourly:
+                failures.append(result.skip_reason or f"{spec.display}: no candles")
     except Exception:
         log.exception("scan failed")
         _record_failure(now, created)
@@ -160,9 +211,13 @@ def _run() -> dict:
         db.add(run)
         db.flush()
         for symbol_id, result in fetched.items():
-            if not result.bars:
+            price_bars = result.bars or result.hourly
+            if not price_bars:
+                spec = get_symbol(symbol_id)
+                if spec is not None:
+                    log.info("%s: check skipped, %s", spec.display, result.error or result.skip_reason or "no candles")
                 continue
-            last = result.bars[-1]
+            last = price_bars[-1]
             row = db.get(LastPrice, symbol_id)
             if row is None:
                 db.add(LastPrice(symbol_id=symbol_id, close=last.close, updated_at=now))
@@ -174,6 +229,8 @@ def _run() -> dict:
         users = db.query(User).all()
         user_settings = {s.user_id: s for s in db.query(Settings).all()}
 
+        # Close finished ideas before counting open automatic trades, so a slot
+        # that just freed can be used by a signal found in this same pass.
         for symbol_id, result in fetched.items():
             spec = get_symbol(symbol_id)
             if spec is None or not result.bars:
@@ -194,16 +251,39 @@ def _run() -> dict:
                 if not signal.close_telegram_sent:
                     if telegram_send(close_message(spec, signal.side, outcome, price)):
                         signal.close_telegram_sent = True
-            db.flush()
+        db.flush()
 
+        for symbol_id, result in fetched.items():
+            spec = get_symbol(symbol_id)
+            if spec is None or not result.bars:
+                continue
             still = (
                 db.query(Signal)
                 .filter(Signal.symbol_id == symbol_id, Signal.status == "active")
                 .first()
             )
+            if not result.tradable:
+                if still is not None and not still.telegram_sent:
+                    still.telegram_sent = _announce(db, spec, still)
+                log.info("%s: %s", spec.display, result.skip_reason or "no new 5-minute trade")
+                continue
+            checked = evaluate(
+                result.bars,
+                spec,
+                params,
+                hourly=result.hourly,
+                m15=result.m15,
+                m1=result.m1,
+            )
+            draft, note = _split_decision(checked)
+            if note:
+                log.info("%s", note)
             if still is not None:
                 if not still.telegram_sent:
                     still.telegram_sent = _announce(db, spec, still)
+                log.info("%s: not taken, this market already has an open signal", spec.display)
+                continue
+            if draft is None:
                 continue
             recent = (
                 db.query(Signal)
@@ -211,12 +291,14 @@ def _run() -> dict:
                 .order_by(Signal.candle_time.desc())
                 .first()
             )
-            draft = evaluate(result.bars, spec, params)
-            if draft is None:
-                continue
             if recent is not None:
                 gap = draft.candle_time - recent.candle_time
-                if gap < timedelta(hours=cfg.min_hours_between):
+                if gap < timedelta(minutes=cfg.min_minutes_between):
+                    log.info(
+                        "%s: not taken, %s minutes since the last signal on this market",
+                        spec.display,
+                        cfg.min_minutes_between,
+                    )
                     continue
             signal = Signal(
                 symbol_id=spec.id,
@@ -240,7 +322,9 @@ def _run() -> dict:
                         settings = user_settings.get(user.id)
                         if settings is None:
                             continue
-                        status, message = _delivery_status(settings, spec.id, spec.mt5_only)
+                        status, message = _delivery_status(
+                            settings, spec.id, spec.mt5_only, _open_auto_count(db, user.id)
+                        )
                         db.add(
                             Delivery(
                                 signal_id=signal.id,
@@ -257,7 +341,7 @@ def _run() -> dict:
             signal.telegram_sent = _announce(db, spec, signal)
             created += 1
 
-        if ids and not any(r.bars for r in fetched.values()):
+        if ids and not any(r.bars or r.hourly for r in fetched.values()):
             ok = False
             message = "No market data. " + " ".join(failures)
         else:
@@ -265,6 +349,7 @@ def _run() -> dict:
             message = f"Checked {len(ids)} markets. New signals: {created}."
             if failures:
                 message += " Data failed: " + "; ".join(failures[:6])
+        log.info("%s", message)
         run.ok = ok
         run.message = message[:2000]
         run.signals_created = created

@@ -22,15 +22,20 @@ Size is a percent of balance, capped by the maximum lots you set, and never roun
 
 ## What a signal is
 
-On the last **closed** hourly candle:
+A signal is a pullback on the last **closed 5-minute** candle, inside the higher-timeframe trend.
 
-- Buy when the 20-hour average crosses above the 50-hour average, the 50-hour average is above the 200-hour average, and RSI is between 45 and 75.
-- Sell is the mirror, with RSI between 25 and 55.
-- The stop is 1.5 times the average hourly range. The target is twice the stop distance.
+- The 1-hour trend has to agree. Price and the 50-hour average are on the same side of the 200-hour average. A flat hour produces no trade.
+- The 15-minute swings have to agree: higher highs and higher lows for a buy, lower highs and lower lows for a sell. A mixed swing is allowed only when the latest swing still holds in the trade’s direction.
+- On the 5-minute candle, RSI is in a pullback band and turning (about 40–58 and rising for a buy), MACD momentum is turning with the trend, and price has closed back through the 50-bar average without being extended past it. A fresh 1-minute candle has to close the same way.
+- The stop sits beyond that recent swing, and only when the distance is about 0.8 to 2 times the 5-minute range. The target is 1.8 times the stop.
 
-Prices come from Dukascopy’s public bid feed. WTI and Brent there are cash CFDs (`LIGHTCMDUSD`, `BRENTCMDUSD`), so they can differ from XM’s OILCash and BRENTCash quotes. If that feed is unreachable, the scan falls back to Yahoo Finance. The copier skips an order if the broker price has already moved more than a quarter of the way to the stop.
+One signal per market at a time. After it closes, the next one on that market waits 15 minutes. An idea that has not hit the stop or the target expires after 6 hours.
 
-This is a rules alert. It is not a promise of profit. A stop can be skipped in a fast market.
+Every signal is posted to Telegram as soon as it appears. Automatic accounts do not take all of them. Three open automatic trades is the usual limit, and five is the most. Anything past that stays on Telegram and on the desk for a manual entry. The service log prints one line per market on every scan, with the 1-hour trend, RSI, MA50, EMA200, MACD, and the 15-minute structure, whether or not a trade is taken.
+
+Prices come from Dukascopy’s public bid feed. WTI and Brent there are cash CFDs (`LIGHTCMDUSD`, `BRENTCMDUSD`), so they can differ from XM’s OILCash and BRENTCash quotes. If that feed is unreachable, the hourly trend can fall back to Yahoo Finance, but a new trade still needs a fresh 5-minute candle. The copier skips an order if the broker price has already moved more than a quarter of the way to the stop.
+
+This is a rules alert. It is not a promise of profit, and it is not a measured win rate. A stop can be skipped in a fast market.
 
 ## Run it locally
 
@@ -98,7 +103,7 @@ Set:
 curl -X POST -H "X-Cron-Key: $CRON_KEY" https://YOUR-APP/api/system/scan
 ```
 
-every 15 minutes. An always-on instance can rely on `SCHEDULER_ENABLED=true` alone.
+every minute, so a closed 5-minute candle is posted quickly. An always-on instance can rely on `SCHEDULER_ENABLED=true` alone. The log line for each market is the check itself: you do not have to wait for Telegram to see that RSI, MACD, MA50, and EMA200 were read.
 
 Health check: `GET /api/health`.
 

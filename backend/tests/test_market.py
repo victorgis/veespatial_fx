@@ -4,7 +4,17 @@ import lzma
 import struct
 from datetime import datetime, timedelta, timezone
 
-from app.market import decode_bid_candles, decode_hour_ticks, minutes_to_hours, series_is_fresh
+from app.market import (
+    decode_bid_candles,
+    decode_hour_ticks,
+    decode_tick_minutes,
+    drop_forming,
+    m5_is_fresh,
+    minutes_to_hours,
+    resample,
+    series_is_fresh,
+    session_open,
+)
 from app.strategy import Bar
 from app.telegram_svc import explain_telegram_error
 
@@ -68,6 +78,45 @@ def test_friday_close_is_stale_once_the_new_week_is_trading():
     bars = [Bar(start + timedelta(hours=i), 1.1, 1.2, 1.0, 1.1) for i in range(230)]
     assert series_is_fresh(bars, datetime(2026, 9, 27, 12, tzinfo=timezone.utc)) is True
     assert series_is_fresh(bars, datetime(2026, 9, 29, 12, tzinfo=timezone.utc)) is False
+
+
+def test_tick_minutes_keep_each_minute():
+    hour = datetime(2026, 9, 29, 11, tzinfo=timezone.utc)
+    tick = struct.Struct(">3I2f")
+    raw = tick.pack(0, 113600, 113500, 1.0, 1.0) + tick.pack(1000, 113700, 113200, 1.0, 1.0)
+    raw += tick.pack(61_000, 113800, 113600, 1.0, 1.0)
+    bars = decode_tick_minutes(lzma.compress(raw), hour, 100_000)
+    assert [bar.time for bar in bars] == [hour, hour + timedelta(minutes=1)]
+    assert bars[0].low == 1.132
+    assert bars[1].close == 1.136
+
+
+def test_resample_and_drop_the_candle_that_is_still_open():
+    start = datetime(2026, 9, 29, 12, 0, tzinfo=timezone.utc)
+    minutes = [
+        Bar(start, 1.0, 1.2, 0.9, 1.1),
+        Bar(start + timedelta(minutes=1), 1.1, 1.3, 1.0, 1.15),
+        Bar(start + timedelta(minutes=5), 1.15, 1.16, 1.14, 1.15),
+    ]
+    five = resample(minutes, 5)
+    assert [bar.time for bar in five] == [start, start + timedelta(minutes=5)]
+    assert five[0].high == 1.3
+    assert five[0].close == 1.15
+    closed = drop_forming(five, 5, start + timedelta(minutes=7))
+    assert [bar.time for bar in closed] == [start]
+
+
+def test_session_and_five_minute_freshness():
+    assert session_open(datetime(2026, 9, 25, 21, tzinfo=timezone.utc)) is True
+    assert session_open(datetime(2026, 9, 25, 22, tzinfo=timezone.utc)) is False
+    assert session_open(datetime(2026, 9, 26, 12, tzinfo=timezone.utc)) is False
+    assert session_open(datetime(2026, 9, 27, 21, tzinfo=timezone.utc)) is False
+    assert session_open(datetime(2026, 9, 27, 22, 30, tzinfo=timezone.utc)) is True
+    now = datetime(2026, 9, 28, 12, 10, tzinfo=timezone.utc)
+    fresh = [Bar(datetime(2026, 9, 28, 12, tzinfo=timezone.utc), 1, 2, 1, 1)]
+    stale = [Bar(datetime(2026, 9, 28, 11, 40, tzinfo=timezone.utc), 1, 2, 1, 1)]
+    assert m5_is_fresh(fresh, now) is True
+    assert m5_is_fresh(stale, now) is False
 
 
 def test_chat_not_found_names_the_channel_id_and_hides_the_token():

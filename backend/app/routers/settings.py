@@ -19,6 +19,7 @@ def _apply(row: Settings, body: SettingsIn) -> None:
     row.platform = body.platform
     row.risk_percent = body.risk_percent
     row.max_lot = body.max_lot
+    row.max_open_trades = body.max_open_trades
     row.planning_balance = body.planning_balance
     row.enabled_symbols = ",".join(dict.fromkeys(body.enabled_symbols))
     row.alias_overrides = body.alias_overrides.strip()

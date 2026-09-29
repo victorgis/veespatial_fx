@@ -29,15 +29,16 @@ def mismatch_message(selected: str, detected: str, fx_symbol: str | None, fx_con
 
 
 def rationale(spec: Symbol, side: str, rsi: float) -> str:
-    crossed = "above" if side == "buy" else "below"
-    trend = "above" if side == "buy" else "below"
-    chase = "an overbought spike" if side == "buy" else "an oversold spike"
     verb = "Buy" if side == "buy" else "Sell"
+    trend = "uptrend" if side == "buy" else "downtrend"
+    held = "above the last 15-minute swing low" if side == "buy" else "below the last 15-minute swing high"
     return (
-        f"{verb} {spec.display}. On the last closed hourly candle the 20-hour average crossed {crossed} "
-        f"the 50-hour average, and the 50-hour average is {trend} the 200-hour average. "
-        f"RSI is {rsi:.0f}, inside the allowed band, so this is not a chase of {chase}. "
-        "The stop is 1.5 times the recent hourly range. The target is twice as far as the stop."
+        f"{verb} {spec.display}. The 1-hour trend is an {trend}: price and the 50-hour average "
+        f"are on the same side of the 200-hour average, and the 15-minute swings agree. "
+        f"On the last closed 5-minute candle RSI is {rsi:.0f}, inside the pullback band, and MACD momentum "
+        f"is turning with the trend. Price closed back through the 5-minute 50-bar average and is still {held}. "
+        "The stop is beyond that recent swing. The target is 1.8 times the stop distance. "
+        "This is a rules alert, not a promise of profit."
     )
 
 
@@ -68,6 +69,7 @@ def telegram_message(
     lines = [
         f"{mark} {verb} {spec.display}",
         spec.pair,
+        "5-minute pullback inside the 1-hour trend.",
         "",
         f"Entry   {_fmt_price(entry, spec.digits)}",
         f"Stop    {_fmt_price(sl, spec.digits)}",
