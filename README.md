@@ -28,7 +28,7 @@ On the last **closed** hourly candle:
 - Sell is the mirror, with RSI between 25 and 55.
 - The stop is 1.5 times the average hourly range. The target is twice the stop distance.
 
-Prices come from Yahoo Finance. WTI and Brent there are futures (`CL=F`, `BZ=F`), so they can differ from XM’s cash quotes. The copier skips an order if the broker price has already moved more than a quarter of the way to the stop.
+Prices come from Dukascopy’s public bid feed. WTI and Brent there are cash CFDs (`LIGHTCMDUSD`, `BRENTCMDUSD`), so they can differ from XM’s OILCash and BRENTCash quotes. If that feed is unreachable, the scan falls back to Yahoo Finance. The copier skips an order if the broker price has already moved more than a quarter of the way to the stop.
 
 This is a rules alert. It is not a promise of profit. A stop can be skipped in a fast market.
 
@@ -61,9 +61,9 @@ cd backend && .venv/bin/pytest
 
 ## Telegram
 
-1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token.
-2. Add the bot to your channel as an admin.
-3. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHANNEL_ID` (a channel id looks like `-100…`).
+1. Create a bot with [@BotFather](https://t.me/BotFather) and copy the token. If a token is ever pasted into a log or a chat, revoke it in BotFather and put the new one in the host’s environment.
+2. Add the bot to your channel as an admin, with permission to post.
+3. Set `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHANNEL_ID`. A channel id looks like `-100…`. Forward a channel post to [@getidsbot](https://t.me/getidsbot) to read it. A public channel can use its `@name` once the bot is an admin. `chat not found` means the id is wrong or the bot is not in that channel.
 
 The channel shows both the standard and the micro lot for a $1,000 account at 1% risk. Each person’s own size is on their dashboard.
 

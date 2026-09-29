@@ -56,6 +56,28 @@ def _delivery_status(user_settings: Settings, spec_id: str, spec_mt5_only: bool)
     return "queued", "Waiting for your platform."
 
 
+def _announce(db, spec, signal: Signal) -> bool:  # type: ignore[no-untyped-def]
+    cfg = get_settings()
+    ref_balance = cfg.telegram_reference_balance
+    ref_risk = ref_balance * cfg.telegram_reference_risk / 100.0
+    rates = {row.symbol_id: row.close for row in db.query(LastPrice).all()}
+    standard = lots_from_contract(spec, "standard", ref_risk, signal.entry, signal.sl, "mt5", 100, "USD", rates)
+    micro = lots_from_contract(spec, "micro", ref_risk, signal.entry, signal.sl, "mt5", 10_000, "USD", rates)
+    text = telegram_message(
+        spec,
+        signal.side,
+        signal.entry,
+        signal.sl,
+        signal.tp,
+        standard,
+        micro,
+        signal.id,
+        ref_balance,
+        cfg.telegram_reference_risk,
+    )
+    return telegram_send(text)
+
+
 def _resolve(signal: Signal, bars, now: datetime, expiry_hours: int) -> tuple[str, float] | None:
     future = []
     for bar in bars:
@@ -146,6 +168,8 @@ def _run() -> dict:
                 .first()
             )
             if still is not None:
+                if not still.telegram_sent:
+                    still.telegram_sent = _announce(db, spec, still)
                 continue
             recent = (
                 db.query(Signal)
@@ -196,24 +220,7 @@ def _run() -> dict:
                     db.flush()
             except IntegrityError:
                 continue
-            ref_balance = cfg.telegram_reference_balance
-            ref_risk = ref_balance * cfg.telegram_reference_risk / 100.0
-            rates = {r.symbol_id: r.close for r in db.query(LastPrice).all()}
-            standard = lots_from_contract(spec, "standard", ref_risk, draft.entry, draft.sl, "mt5", 100, "USD", rates)
-            micro = lots_from_contract(spec, "micro", ref_risk, draft.entry, draft.sl, "mt5", 10_000, "USD", rates)
-            text = telegram_message(
-                spec,
-                draft.side,
-                draft.entry,
-                draft.sl,
-                draft.tp,
-                standard,
-                micro,
-                signal.id,
-                ref_balance,
-                cfg.telegram_reference_risk,
-            )
-            signal.telegram_sent = telegram_send(text)
+            signal.telegram_sent = _announce(db, spec, signal)
             created += 1
 
         if ids and not any(r.bars for r in fetched.values()):

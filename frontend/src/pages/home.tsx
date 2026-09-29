@@ -50,9 +50,10 @@ export function Home() {
           />
         ) : null}
         {me.user.is_admin && !data.me.telegram_configured ? (
-          <Banner tone="warn" title="Telegram is not configured">
-            Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID on the server. Signals still appear here.
-          </Banner>
+          <Banner tone="warn" title="Telegram is not configured" children="Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHANNEL_ID on the server. Signals still appear here." />
+        ) : null}
+        {me.user.is_admin && data.me.telegram_configured && data.me.telegram_error ? (
+          <Banner tone="warn" title="Telegram did not post" children={data.me.telegram_error} />
         ) : null}
         {error ? <p className="error">{error}</p> : null}
         {data.signals.length === 0 ? (

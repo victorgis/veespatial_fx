@@ -19,7 +19,7 @@ from app.schemas import (
 )
 from app.sizing import detect_account_type
 from app.symbols import SYMBOLS, get_symbol
-from app.telegram_svc import configured
+from app.telegram_svc import configured, last_error
 from app.wording import status_line
 
 
@@ -85,6 +85,7 @@ def me_out(db: Session, user: User, row: Settings) -> MeOut:
         settings=settings_out(row),
         connection=conn,
         telegram_configured=configured(),
+        telegram_error=last_error(),
         status_line=status_line(row.trade_mode, conn.online, conn.mismatch and row.trade_mode == "auto", row.broker),
         watchlist=watched,
     )

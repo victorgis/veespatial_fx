@@ -34,6 +34,9 @@ class Symbol:
     quote_mode: str
     mt5_only: bool
     note: str
+    # Dukascopy public feed name and the integer divisor that turns its prices into quotes.
+    feed: str = ""
+    price_divisor: int = 100_000
 
 
 def _fx(
@@ -62,6 +65,8 @@ def _fx(
         quote_mode=quote_mode,
         mt5_only=False,
         note="",
+        feed=base,
+        price_divisor=1000 if id_.endswith("jpy") else 100_000,
     )
 
 
@@ -91,6 +96,8 @@ SYMBOLS: tuple[Symbol, ...] = (
         quote_mode="usd",
         mt5_only=False,
         note="On XM, standard gold is usually named GOLD (100 oz) and micro gold GOLDmicro (1 oz).",
+        feed="XAUUSD",
+        price_divisor=1000,
     ),
     Symbol(
         id="oil",
@@ -107,6 +114,8 @@ SYMBOLS: tuple[Symbol, ...] = (
         quote_mode="usd",
         mt5_only=True,
         note="XM lists this as OILCash, 100 barrels per lot, on MT5. The cash contract is not on MT4.",
+        feed="LIGHTCMDUSD",
+        price_divisor=1000,
     ),
     Symbol(
         id="brent",
@@ -123,6 +132,8 @@ SYMBOLS: tuple[Symbol, ...] = (
         quote_mode="usd",
         mt5_only=True,
         note="XM lists this as BRENTCash, 100 barrels per lot, on MT5. The cash contract is not on MT4.",
+        feed="BRENTCMDUSD",
+        price_divisor=1000,
     ),
 )
 

@@ -38,6 +38,9 @@ def _static_dir() -> Path | None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    # httpx logs the full request URL at INFO, which would include the bot token.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     cfg = get_settings()
     if cfg.env == "production" and cfg.jwt_secret == "dev-only-change-me":
         raise RuntimeError("Set JWT_SECRET before running with ENV=production.")
@@ -69,6 +72,20 @@ app.include_router(settings.router)
 app.include_router(signals.router)
 app.include_router(ea.router)
 app.include_router(system.router)
+
+
+@app.get("/health", include_in_schema=False)
+def root_health() -> dict:
+    """Render's default check is /health. The API check stays at /api/health."""
+    from app.database import session_scope
+    from app.models import BotConfig
+
+    db = session_scope()
+    try:
+        db.query(BotConfig).first()
+    finally:
+        db.close()
+    return {"ok": True}
 
 
 @app.middleware("http")

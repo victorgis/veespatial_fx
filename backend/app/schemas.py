@@ -90,6 +90,7 @@ class MeOut(BaseModel):
     settings: SettingsOut
     connection: ConnectionOut
     telegram_configured: bool
+    telegram_error: str = ""
     status_line: str
     watchlist: list[str]
 

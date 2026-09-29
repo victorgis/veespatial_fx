@@ -34,6 +34,7 @@ export type Me = {
   settings: Settings;
   connection: Connection;
   telegram_configured: boolean;
+  telegram_error: string;
   status_line: string;
   watchlist: string[];
 };

@@ -281,3 +281,4 @@ def test_download_and_markets(client):
     assert downloaded.status_code == 200
     assert "WebRequest" in downloaded.text
     assert client.get("/api/health").json()["ok"] is True
+    assert client.get("/health").json()["ok"] is True

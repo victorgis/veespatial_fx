@@ -94,9 +94,9 @@ export function Guide() {
             that. The stop is 1.5 times the recent hourly range. The target is twice as far as the stop.
           </p>
           <p className="help">
-            Prices come from Yahoo Finance. WTI and Brent there are futures, so they can differ from XM’s OILCash and
-            BRENTCash. The copier skips the order if the broker price has already moved more than a quarter of the way
-            to the stop.
+            Prices come from Dukascopy’s public bid feed. WTI and Brent there are cash CFDs, so they can differ from
+            XM’s OILCash and BRENTCash. The copier skips the order if the broker price has already moved more than a
+            quarter of the way to the stop.
           </p>
         </article>
       </div>
