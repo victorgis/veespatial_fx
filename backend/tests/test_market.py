@@ -125,3 +125,27 @@ def test_chat_not_found_names_the_channel_id_and_hides_the_token():
     assert "admin" in text
     assert "bot" in text.lower()
     assert "api.telegram.org" not in text
+
+
+def test_dukascopy_failure_falls_back_to_yahoo(monkeypatch):
+    from app.market import DeskMarket, FetchResult, YahooMarket
+    from app.symbols import get_symbol
+
+    spec = get_symbol("eurusd")
+    assert spec is not None
+
+    def fake_dukascopy_fetch(self, spec, now):
+        return FetchResult([], "", "price feed could not be reached.")
+
+    def fake_yahoo_fetch(self, spec):
+        now = datetime.now(timezone.utc)
+        bar = Bar(now, 1.10, 1.11, 1.09, 1.10)
+        return FetchResult([bar], "Yahoo Finance EURUSD=X", tradable=True)
+
+    monkeypatch.setattr(DeskMarket, "_dukascopy_fetch", fake_dukascopy_fetch)
+    monkeypatch.setattr(YahooMarket, "fetch", fake_yahoo_fetch)
+
+    res = DeskMarket().fetch(spec)
+    assert res.source == "Yahoo Finance EURUSD=X"
+    assert len(res.bars) == 1
+

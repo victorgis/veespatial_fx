@@ -44,7 +44,7 @@ _CURRENT_HOUR_TTL = 60.0
 # Successful series, reused until the next UTC hour.
 _hour_cache: dict[str, tuple[datetime, "FetchResult"]] = {}
 _yahoo_cache: dict[str, tuple[float, "FetchResult"]] = {}
-_YAHOO_TTL = 600
+_YAHOO_TTL = 60
 
 
 class FetchResult:
@@ -301,20 +301,38 @@ def _shift_month(year: int, month: int, back: int) -> tuple[int, int]:
     return year, month
 
 
-def _get(client: httpx.Client, url: str) -> bytes | None:
+def _get(
+    client: httpx.Client,
+    url: str,
+    max_retries: int = 1,
+    fail_counter: list[int] | None = None,
+) -> bytes | None:
     """Return the body, b'' for a missing file, or None when the request failed."""
-    for attempt in range(4):
+    for attempt in range(max_retries + 1):
         try:
             response = client.get(url)
-        except httpx.HTTPError:
+        except (httpx.HTTPError, httpx.TimeoutException):
             response = None
         if response is not None and response.status_code == 404:
+            if fail_counter is not None:
+                fail_counter[0] = 0
             return b""
         if response is not None and response.status_code == 200 and response.content:
+            if fail_counter is not None:
+                fail_counter[0] = 0
             return response.content
-        if attempt < 3:
-            time.sleep(0.5 * (attempt + 1))
+        if attempt < max_retries:
+            time.sleep(0.1)
+    if fail_counter is not None:
+        fail_counter[0] += 1
+        if fail_counter[0] >= 2:
+            raise DukascopyError("Dukascopy connection failing repeatedly")
     return None
+
+
+class DukascopyError(Exception):
+    pass
+
 
 
 class YahooMarket(MarketData):
@@ -336,7 +354,7 @@ class YahooMarket(MarketData):
         errors: list[str] = []
         for ticker in spec.yahoo:
             try:
-                df = yf.download(
+                df_1h = yf.download(
                     ticker,
                     period="90d",
                     interval="1h",
@@ -345,18 +363,63 @@ class YahooMarket(MarketData):
                     threads=False,
                 )
             except Exception as exc:
-                errors.append(f"{ticker}: {exc}")
+                errors.append(f"{ticker} (1h): {exc}")
                 continue
-            bars = _frame_to_bars(df)
-            bars = _closed(bars)
-            if len(bars) >= _MIN_BARS:
-                label = f"Yahoo Finance {ticker}"
-                if ticker.endswith("=F"):
-                    label += " (futures — the XM cash price can differ)"
-                return FetchResult(bars, label, None)
-            errors.append(f"{ticker}: not enough closed hours ({len(bars)})")
+
+            bars_1h = _closed(_frame_to_bars(df_1h))
+            if len(bars_1h) < _MIN_BARS:
+                errors.append(f"{ticker}: not enough closed hours ({len(bars_1h)})")
+                continue
+
+            bars_5m: list[Bar] = []
+            try:
+                df_5m = yf.download(
+                    ticker,
+                    period="5d",
+                    interval="5m",
+                    progress=False,
+                    auto_adjust=False,
+                    threads=False,
+                )
+                bars_5m = _frame_to_bars(df_5m)
+            except Exception:
+                pass
+
+            now_dt = datetime.now(timezone.utc)
+            m5 = drop_forming(bars_5m, 5, now_dt) if bars_5m else []
+            m15 = drop_forming(resample(m5, 15), 15, now_dt) if m5 else []
+
+            label = f"Yahoo Finance {ticker}"
+            if ticker.endswith("=F"):
+                label += " (futures — the XM cash price can differ)"
+
+            skip: str | None = None
+            tradable = False
+            error: str | None = None
+
+            if not session_open(now_dt):
+                skip = f"{spec.display}: market is closed, no new 5-minute trade"
+            elif not m5:
+                skip = f"{spec.display}: no closed 5-minute candle, so no new trade"
+            elif not m5_is_fresh(m5, now_dt):
+                skip = f"{spec.display}: last 5-minute candle {m5[-1].time.strftime('%H:%M')} UTC is too old to trade"
+            else:
+                tradable = True
+
+            return FetchResult(
+                m5,
+                label,
+                error=error,
+                hourly=bars_1h,
+                m15=m15,
+                m1=[],
+                tradable=tradable,
+                skip_reason=skip,
+            )
+
         detail = "; ".join(errors) if errors else "no data"
         return FetchResult([], "", f"{spec.display}: {detail}")
+
 
 
 def _frame_to_bars(df) -> list[Bar]:  # type: ignore[no-untyped-def]
@@ -398,12 +461,36 @@ class DeskMarket(MarketData):
         5-minute candle show up without waiting for the hour to finish.
         """
         now = datetime.now(timezone.utc)
-        minutes = self._recent_minutes(spec, now)
-        m1 = drop_forming(minutes, 1, now)
-        m5 = drop_forming(resample(m1, 5), 5, now)
-        m15 = drop_forming(resample(m1, 15), 15, now)
-        hourly = self._hourly(spec)
-        source = f"Dukascopy {spec.feed} bid" if m5 and spec.feed else hourly.source
+        result = self._dukascopy_fetch(spec, now)
+        if result.error or not result.bars:
+            if result.error:
+                log.warning("%s: Dukascopy fetch failed: %s", spec.display, result.error)
+            fallback = YahooMarket().fetch(spec)
+            if fallback.error is None and (fallback.bars or fallback.hourly):
+                log.info("%s: using %s", spec.display, fallback.source)
+                return fallback
+        return result
+
+    def _dukascopy_fetch(self, spec: Symbol, now: datetime) -> FetchResult:
+        if not spec.feed or spec.price_divisor <= 0:
+            return FetchResult([], "", f"{spec.display}: no price feed is configured.")
+        fail_counter = [0]
+        try:
+            with httpx.Client(
+                timeout=3.0,
+                headers={"User-Agent": "Mozilla/5.0"},
+                follow_redirects=True,
+            ) as client:
+                minutes = self._recent_minutes(client, spec, now, fail_counter)
+                m1 = drop_forming(minutes, 1, now)
+                m5 = drop_forming(resample(m1, 5), 5, now)
+                m15 = drop_forming(resample(m1, 15), 15, now)
+                hourly_res = self._hourly(client, spec, fail_counter)
+        except Exception as exc:
+            log.warning("%s: Dukascopy request failed: %s", spec.display, type(exc).__name__)
+            return FetchResult([], "", f"{spec.display}: price feed could not be reached.")
+
+        source = f"Dukascopy {spec.feed} bid" if m5 and spec.feed else hourly_res.source
         if spec.group == "energy" and source.startswith("Dukascopy") and "cash CFD" not in source:
             source += " (cash CFD — the XM price can differ)"
         skip: str | None = None
@@ -413,8 +500,8 @@ class DeskMarket(MarketData):
             skip = f"{spec.display}: market is closed, no new 5-minute trade"
         elif not m5:
             skip = f"{spec.display}: no closed 5-minute candle, so no new trade"
-            if not hourly.bars:
-                error = hourly.error or skip
+            if not hourly_res.bars:
+                error = hourly_res.error or skip
         elif not m5_is_fresh(m5, now):
             skip = f"{spec.display}: last 5-minute candle {m5[-1].time.strftime('%H:%M')} UTC is too old to trade"
         else:
@@ -423,19 +510,20 @@ class DeskMarket(MarketData):
             m5,
             source,
             error,
-            hourly=hourly.bars,
+            hourly=hourly_res.bars,
             m15=m15,
             m1=m1,
             tradable=tradable,
             skip_reason=skip,
         )
 
-    def _hourly(self, spec: Symbol) -> FetchResult:
+
+    def _hourly(self, client: httpx.Client, spec: Symbol, fail_counter: list[int]) -> FetchResult:
         hour = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
         cached = _hour_cache.get(spec.id)
         if cached and cached[0] == hour and cached[1].error is None:
             return cached[1]
-        result = self._dukascopy(spec)
+        result = self._dukascopy(client, spec, fail_counter)
         if result.error:
             log.warning("%s", result.error)
             fallback = YahooMarket().fetch(spec)
@@ -446,17 +534,12 @@ class DeskMarket(MarketData):
             _hour_cache[spec.id] = (hour, result)
         return result
 
-    def _dukascopy(self, spec: Symbol) -> FetchResult:
+    def _dukascopy(self, client: httpx.Client, spec: Symbol, fail_counter: list[int]) -> FetchResult:
         if not spec.feed or spec.price_divisor <= 0:
             return FetchResult([], "", f"{spec.display}: no price feed is configured.")
         today = datetime.now(timezone.utc).date()
         try:
-            with httpx.Client(
-                timeout=12,
-                headers={"User-Agent": "Mozilla/5.0"},
-                follow_redirects=True,
-            ) as client:
-                bars = self._history(client, spec, today)
+            bars = self._history(client, spec, today, fail_counter)
         except Exception as exc:
             log.warning("%s: Dukascopy request failed: %s", spec.display, type(exc).__name__)
             return FetchResult([], "", f"{spec.display}: price feed could not be reached.")
@@ -475,37 +558,36 @@ class DeskMarket(MarketData):
         log.info("%s: %s closed hours from %s", spec.display, len(bars), label)
         return FetchResult(bars, label, None)
 
-    def _history(self, client: httpx.Client, spec: Symbol, today) -> list[Bar]:  # type: ignore[no-untyped-def]
+    def _history(self, client: httpx.Client, spec: Symbol, today, fail_counter: list[int]) -> list[Bar]:  # type: ignore[no-untyped-def]
         merged: dict[datetime, Bar] = {}
         year, month = today.year, today.month
         for back in (2, 1):
             past_year, past_month = _shift_month(year, month, back)
-            for bar in self._month(client, spec, past_year, past_month):
+            for bar in self._month(client, spec, past_year, past_month, fail_counter):
                 merged[bar.time] = bar
-        for bar in self._current_month(spec, today):
+        for bar in self._current_month(client, spec, today, fail_counter):
             merged[bar.time] = bar
-        for bar in self._today_ticks(spec):
+        for bar in self._today_ticks(client, spec, fail_counter):
             merged[bar.time] = bar
         return [merged[key] for key in sorted(merged)]
 
-    def _month(self, client: httpx.Client, spec: Symbol, year: int, month: int) -> list[Bar]:
+    def _month(self, client: httpx.Client, spec: Symbol, year: int, month: int, fail_counter: list[int]) -> list[Bar]:
         key = (spec.feed, year, month)
         cached = _month_cache.get(key)
         if cached is not None:
             return cached
         url = f"{_FEED}/{spec.feed}/{year}/{month - 1:02d}/BID_candles_hour_1.bi5"
-        blob = _get(client, url)
+        blob = _get(client, url, fail_counter=fail_counter)
         if not blob:
             return []
         bars = decode_bid_candles(blob, _month_start(year, month), spec.price_divisor)
         _month_cache[key] = bars
         return bars
 
-    def _current_month(self, spec: Symbol, today) -> list[Bar]:  # type: ignore[no-untyped-def]
+    def _current_month(self, client: httpx.Client, spec: Symbol, today, fail_counter: list[int]) -> list[Bar]:  # type: ignore[no-untyped-def]
         year, month = today.year, today.month
         hours: list[Bar] = []
         pending: list[int] = []
-        # Today's minute file is published after the day ends. Hours so far come from tick files.
         for day in range(1, today.day):
             stamp = datetime(year, month, day, tzinfo=timezone.utc)
             cached = _day_cache.get((spec.feed, stamp))
@@ -515,7 +597,7 @@ class DeskMarket(MarketData):
                 pending.append(day)
         if not pending:
             return hours
-        fetched = self._fetch_days(spec, year, month, pending)
+        fetched = self._fetch_days(client, spec, year, month, pending, fail_counter)
         for day, day_hours, remember in fetched:
             stamp = datetime(year, month, day, tzinfo=timezone.utc)
             if remember and day < today.day:
@@ -524,7 +606,7 @@ class DeskMarket(MarketData):
         hours.sort(key=lambda bar: bar.time)
         return hours
 
-    def _today_ticks(self, spec: Symbol) -> list[Bar]:
+    def _today_ticks(self, client: httpx.Client, spec: Symbol, fail_counter: list[int]) -> list[Bar]:
         now = datetime.now(timezone.utc)
         pending: list[datetime] = []
         hours: list[Bar] = []
@@ -547,7 +629,7 @@ class DeskMarket(MarketData):
             pending.append(stamp)
         if not pending:
             return hours
-        for stamp, bar, remember in self._fetch_tick_hours(spec, pending):
+        for stamp, bar, remember in self._fetch_tick_hours(client, spec, pending, fail_counter):
             if remember:
                 _tick_cache[(spec.feed, stamp)] = bar
             if bar is not None:
@@ -556,34 +638,32 @@ class DeskMarket(MarketData):
         return hours
 
     def _fetch_tick_hours(
-        self, spec: Symbol, stamps: list[datetime]
+        self, client: httpx.Client, spec: Symbol, stamps: list[datetime], fail_counter: list[int]
     ) -> list[tuple[datetime, Bar | None, bool]]:
         def one(stamp: datetime) -> tuple[datetime, Bar | None, bool]:
             url = (
                 f"{_FEED}/{spec.feed}/{stamp.year}/{stamp.month - 1:02d}/"
                 f"{stamp.day:02d}/{stamp.hour:02d}h_ticks.bi5"
             )
-            with httpx.Client(timeout=12, headers={"User-Agent": "Mozilla/5.0"}, follow_redirects=True) as local:
-                blob = _get(local, url)
+            blob = _get(client, url, fail_counter=fail_counter)
             if blob is None:
                 return stamp, None, False
             return stamp, decode_hour_ticks(blob, stamp, spec.price_divisor), True
 
-        # Newest first, and one at a time. A burst of connections is what this host drops.
         return [one(stamp) for stamp in sorted(stamps, reverse=True)]
 
     def _fetch_days(
         self,
+        client: httpx.Client,
         spec: Symbol,
         year: int,
         month: int,
         days: list[int],
+        fail_counter: list[int],
     ) -> list[tuple[int, list[Bar], bool]]:
         def one(day: int) -> tuple[int, list[Bar], bool]:
             url = f"{_FEED}/{spec.feed}/{year}/{month - 1:02d}/{day:02d}/BID_candles_min_1.bi5"
-            # A client is not shared across threads. One slow day must not corrupt the others.
-            with httpx.Client(timeout=12, headers={"User-Agent": "Mozilla/5.0"}, follow_redirects=True) as local:
-                blob = _get(local, url)
+            blob = _get(client, url, fail_counter=fail_counter)
             if blob is None:
                 return day, [], False
             origin = datetime(year, month, day, tzinfo=timezone.utc)
@@ -591,30 +671,24 @@ class DeskMarket(MarketData):
 
         return [one(day) for day in days]
 
-    def _recent_minutes(self, spec: Symbol, now: datetime) -> list[Bar]:
-        """Yesterday and the days just before it, plus today's ticks.
-
-        Monday morning still needs Friday. Four calendar days covers that
-        without downloading the whole month of minute files.
-        """
+    def _recent_minutes(self, client: httpx.Client, spec: Symbol, now: datetime, fail_counter: list[int]) -> list[Bar]:
         merged: dict[datetime, Bar] = {}
         for back in (4, 3, 2, 1):
             day = (now - timedelta(days=back)).date()
-            for bar in self._minute_day(spec, day):
+            for bar in self._minute_day(client, spec, day, fail_counter):
                 merged[bar.time] = bar
-        for bar in self._today_minutes(spec, now):
+        for bar in self._today_minutes(client, spec, now, fail_counter):
             merged[bar.time] = bar
         return [merged[key] for key in sorted(merged)]
 
-    def _minute_day(self, spec: Symbol, day) -> list[Bar]:  # type: ignore[no-untyped-def]
+    def _minute_day(self, client: httpx.Client, spec: Symbol, day, fail_counter: list[int]) -> list[Bar]:  # type: ignore[no-untyped-def]
         stamp = datetime(day.year, day.month, day.day, tzinfo=timezone.utc)
         key = (spec.feed, stamp)
         cached = _minute_day_cache.get(key)
         if cached is not None:
             return cached
         url = f"{_FEED}/{spec.feed}/{day.year}/{day.month - 1:02d}/{day.day:02d}/BID_candles_min_1.bi5"
-        with httpx.Client(timeout=12, headers={"User-Agent": "Mozilla/5.0"}, follow_redirects=True) as client:
-            blob = _get(client, url)
+        blob = _get(client, url, fail_counter=fail_counter)
         if blob is None:
             return []
         if not blob:
@@ -624,13 +698,12 @@ class DeskMarket(MarketData):
         _minute_day_cache[key] = bars
         return bars
 
-    def _today_minutes(self, spec: Symbol, now: datetime) -> list[Bar]:
+    def _today_minutes(self, client: httpx.Client, spec: Symbol, now: datetime, fail_counter: list[int]) -> list[Bar]:
         minutes: list[Bar] = []
-        # Include the hour that is still printing. Its file can 404 early in the hour.
         for hour_n in range(now.hour + 1):
             stamp = now.replace(hour=hour_n, minute=0, second=0, microsecond=0)
             closed = hour_n < now.hour
-            got = self._tick_minutes(spec, stamp, closed)
+            got = self._tick_minutes(client, spec, stamp, closed, fail_counter)
             minutes.extend(got)
         return minutes
 
@@ -643,7 +716,7 @@ class DeskMarket(MarketData):
             return None
         return bars
 
-    def _tick_minutes(self, spec: Symbol, stamp: datetime, closed: bool) -> list[Bar]:
+    def _tick_minutes(self, client: httpx.Client, spec: Symbol, stamp: datetime, closed: bool, fail_counter: list[int]) -> list[Bar]:
         now_mono = time.monotonic()
         stored = self._stored_minutes(spec, stamp, now_mono)
         if stored is not None:
@@ -652,8 +725,7 @@ class DeskMarket(MarketData):
             f"{_FEED}/{spec.feed}/{stamp.year}/{stamp.month - 1:02d}/"
             f"{stamp.day:02d}/{stamp.hour:02d}h_ticks.bi5"
         )
-        with httpx.Client(timeout=12, headers={"User-Agent": "Mozilla/5.0"}, follow_redirects=True) as client:
-            blob = _get(client, url)
+        blob = _get(client, url, fail_counter=fail_counter)
         if blob is None:
             return []
         bars = decode_tick_minutes(blob, stamp, spec.price_divisor) if blob else []
