@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_channel_id: str = ""
     cron_key: str = ""
+    massive_api_key: str = ""
     static_dir: str = ""
     experts_dir: str = ""
     # Reference used only in the shared Telegram post. Each account is sized

@@ -21,6 +21,7 @@ from datetime import datetime, timedelta, timezone
 
 import httpx
 
+from app.config import get_settings
 from app.strategy import Bar
 from app.symbols import Symbol
 
@@ -45,7 +46,9 @@ _CURRENT_HOUR_TTL = 60.0
 # Successful series, reused until the next UTC hour.
 _hour_cache: dict[str, tuple[datetime, "FetchResult"]] = {}
 _yahoo_cache: dict[str, tuple[float, "FetchResult"]] = {}
+_massive_cache: dict[str, tuple[float, "FetchResult"]] = {}
 _YAHOO_TTL = 60
+_MASSIVE_TTL = 60
 _dukascopy_down_until: float = 0.0
 _DUKASCOPY_COOLDOWN_SECONDS = 150.0 #2.5 minutes
 
@@ -336,6 +339,107 @@ def _get(
 class DukascopyError(Exception):
     pass
 
+
+def _massive_ticker(spec: Symbol) -> str:
+    feed = spec.feed.upper()
+    if spec.group == "currency":
+        return f"C:{feed}"
+    if spec.id == "gold":
+        return "C:XAUUSD"
+    if spec.id == "oil":
+        return "C:XTIUSD"
+    if spec.id == "brent":
+        return "C:XBRUSD"
+    return f"C:{feed}"
+
+
+class MassiveMarket(MarketData):
+    def __init__(self, api_key: str | None = None) -> None:
+        self.api_key = (api_key or get_settings().massive_api_key).strip()
+
+    def fetch(self, spec: Symbol) -> FetchResult:
+        now_ts = datetime.now(timezone.utc).timestamp()
+        cached = _massive_cache.get(spec.id)
+        if cached and now_ts - cached[0] < _MASSIVE_TTL:
+            return cached[1]
+        result = self._download(spec)
+        if result.error is None:
+            _massive_cache[spec.id] = (now_ts, result)
+        return result
+
+    def _download(self, spec: Symbol) -> FetchResult:
+        if not self.api_key:
+            return FetchResult([], "", f"{spec.display}: MASSIVE_API_KEY is not configured.")
+
+        ticker = _massive_ticker(spec)
+        now_dt = datetime.now(timezone.utc)
+        today_str = now_dt.strftime("%Y-%m-%d")
+        from_5m_str = (now_dt - timedelta(days=7)).strftime("%Y-%m-%d")
+        from_1h_str = (now_dt - timedelta(days=90)).strftime("%Y-%m-%d")
+
+        try:
+            with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+                url_1h = (
+                    f"https://api.massive.com/v2/aggs/ticker/{ticker}/range/1/hour/"
+                    f"{from_1h_str}/{today_str}?adjusted=true&sort=asc&limit=50000&apiKey={self.api_key}"
+                )
+                resp_1h = client.get(url_1h)
+                if resp_1h.status_code != 200:
+                    return FetchResult([], "", f"{spec.display}: Massive API 1h request returned HTTP {resp_1h.status_code}")
+                data_1h = resp_1h.json()
+                results_1h = data_1h.get("results", [])
+                bars_1h: list[Bar] = []
+                for item in results_1h:
+                    dt = datetime.fromtimestamp(item["t"] / 1000.0, tz=timezone.utc)
+                    bars_1h.append(Bar(dt, float(item["o"]), float(item["h"]), float(item["l"]), float(item["c"])))
+                bars_1h = _closed(bars_1h)
+
+                if len(bars_1h) < _MIN_BARS:
+                    return FetchResult([], "", f"{spec.display}: Massive API returned {len(bars_1h)} closed hours (need {_MIN_BARS}).")
+
+                url_5m = (
+                    f"https://api.massive.com/v2/aggs/ticker/{ticker}/range/5/minute/"
+                    f"{from_5m_str}/{today_str}?adjusted=true&sort=asc&limit=50000&apiKey={self.api_key}"
+                )
+                resp_5m = client.get(url_5m)
+                bars_5m: list[Bar] = []
+                if resp_5m.status_code == 200:
+                    data_5m = resp_5m.json()
+                    results_5m = data_5m.get("results", [])
+                    for item in results_5m:
+                        dt = datetime.fromtimestamp(item["t"] / 1000.0, tz=timezone.utc)
+                        bars_5m.append(Bar(dt, float(item["o"]), float(item["h"]), float(item["l"]), float(item["c"])))
+
+                m5 = drop_forming(bars_5m, 5, now_dt) if bars_5m else []
+                m15 = drop_forming(resample(m5, 15), 15, now_dt) if m5 else []
+
+                label = f"Massive API {ticker}"
+                skip: str | None = None
+                tradable = False
+                error: str | None = None
+
+                if not session_open(now_dt):
+                    skip = f"{spec.display}: market is closed, no new 5-minute trade"
+                elif not m5:
+                    skip = f"{spec.display}: no closed 5-minute candle, so no new trade"
+                elif not m5_is_fresh(m5, now_dt):
+                    skip = f"{spec.display}: last 5-minute candle {m5[-1].time.strftime('%H:%M')} UTC is too old to trade"
+                else:
+                    tradable = True
+
+                return FetchResult(
+                    m5,
+                    label,
+                    error=error,
+                    hourly=bars_1h,
+                    m15=m15,
+                    m1=[],
+                    tradable=tradable,
+                    skip_reason=skip,
+                )
+        except Exception as exc:
+            log.warning("%s: Massive API request failed: %s", spec.display, exc)
+            return FetchResult([], "", f"{spec.display}: Massive API could not be reached ({exc}).")
 
 
 class YahooMarket(MarketData):
@@ -753,12 +857,18 @@ def set_market_override(market: MarketData | None) -> None:
 
 
 def get_market() -> MarketData:
-    return _override or DeskMarket()
+    if _override:
+        return _override
+    cfg = get_settings()
+    if cfg.massive_api_key.strip():
+        return MassiveMarket(cfg.massive_api_key.strip())
+    return DeskMarket()
 
 
 def clear_cache() -> None:
     global _dukascopy_down_until
     _dukascopy_down_until = 0.0
+    _massive_cache.clear()
     _hour_cache.clear()
     _yahoo_cache.clear()
     _month_cache.clear()
