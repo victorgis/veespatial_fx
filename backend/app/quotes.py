@@ -1,0 +1,176 @@
+"""What size a person should trade, for one signal and one account."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from sqlalchemy.orm import Session
+
+from app.models import BrokerSpec, LastPrice, Settings
+from app.sizing import (
+    LotResult,
+    chase_limit,
+    detect_account_type,
+    lots_from_contract,
+    lots_from_ticks,
+)
+from app.symbols import Symbol, aliases_for, contract_size_for, get_symbol
+from app.wording import copy_text, mismatch_message
+
+
+@dataclass
+class Quote:
+    lots: float | None
+    units: float | None
+    unit: str
+    risk_cash: float
+    currency: str
+    min_lot: float
+    too_small: bool
+    reason: str | None
+    approximate: bool
+    standard_lots: float | None
+    micro_lots: float | None
+    scales_with_account: bool
+    uses_live_contract: bool
+    contract_size: float | None
+    balance_source: str
+    balance: float
+    blocked: bool
+    chase: float
+    broker_symbol: str | None
+    copy: str
+
+
+def converters(db: Session) -> dict[str, float]:
+    rows = db.query(LastPrice).all()
+    return {r.symbol_id: r.close for r in rows}
+
+
+def account_mismatch(settings: Settings) -> tuple[bool, str | None]:
+    detected = detect_account_type(settings.fx_contract)
+    if settings.trust_platform_size or detected is None:
+        return False, None
+    if detected == settings.account_type:
+        return False, None
+    return True, mismatch_message(settings.account_type, detected, settings.fx_symbol, settings.fx_contract)
+
+
+def _pick_spec(rows: list[BrokerSpec], spec: Symbol, settings: Settings) -> BrokerSpec | None:
+    names = {a.upper() for a in aliases_for(spec, settings.alias_overrides)}
+    matches = [r for r in rows if r.broker_symbol.upper() in names]
+    if not matches:
+        return None
+    target = contract_size_for(spec, settings.account_type)
+    matches.sort(key=lambda r: (abs(r.contract_size - target), r.broker_symbol))
+    return matches[0]
+
+
+def _spec_conflicts(row: BrokerSpec, spec: Symbol, account_type: str) -> bool:
+    if row.contract_size <= 0:
+        return True
+    if not spec.scales_with_account:
+        return False
+    target = contract_size_for(spec, account_type)
+    if target <= 0:
+        return True
+    ratio = row.contract_size / target
+    return ratio > 3 or ratio < (1 / 3)
+
+
+def build_quote(db: Session, settings: Settings, spec: Symbol, side: str, entry: float, sl: float, tp: float) -> Quote:
+    currency = settings.account_currency or "USD"
+    if settings.balance is not None and settings.balance > 0:
+        balance = float(settings.balance)
+        source = "platform"
+    else:
+        balance = float(settings.planning_balance or 0)
+        source = "planning"
+    risk_cash = balance * float(settings.risk_percent) / 100.0
+    rates = converters(db)
+    # Comparison figures are the uncapped risk size, so standard vs micro stays honest.
+    standard = lots_from_contract(spec, "standard", risk_cash, entry, sl, settings.platform, 1_000_000, currency, rates)
+    micro = lots_from_contract(spec, "micro", risk_cash, entry, sl, settings.platform, 1_000_000, currency, rates)
+    own = lots_from_contract(
+        spec, settings.account_type, risk_cash, entry, sl, settings.platform, settings.max_lot, currency, rates
+    )
+    rows = db.query(BrokerSpec).filter(BrokerSpec.user_id == settings.user_id).all()
+    live = _pick_spec(rows, spec, settings)
+    mismatch, mismatch_text = account_mismatch(settings)
+    conflict = bool(live and _spec_conflicts(live, spec, settings.account_type) and not settings.trust_platform_size)
+    blocked = mismatch or conflict
+
+    chosen: LotResult
+    uses_live = False
+    broker_symbol = None
+    contract = None
+    if live and not blocked:
+        cap = float(settings.max_lot)
+        chosen = lots_from_ticks(
+            risk_cash,
+            abs(entry - sl),
+            live.tick_size,
+            live.tick_value,
+            live.contract_size,
+            live.min_lot,
+            live.lot_step or 0.01,
+            cap,
+            currency,
+        )
+        uses_live = True
+        broker_symbol = live.broker_symbol
+        contract = live.contract_size
+    else:
+        chosen = own
+        contract = chosen.contract_size
+
+    warning = None
+    if blocked:
+        warning = mismatch_text or (
+            f"{live.broker_symbol if live else spec.display} on your platform does not match a "
+            f"{settings.account_type} contract. Automatic orders for this market are paused."
+        )
+
+    # Manual traders still need a number to type. Automatic sending is what pauses.
+    if settings.trade_mode == "auto" and blocked:
+        lots = None
+        units = None
+        reason = warning
+        too_small = False
+        approximate = False
+    else:
+        lots = chosen.lots
+        units = chosen.units
+        reason = chosen.reason or warning
+        too_small = chosen.too_small
+        approximate = chosen.approximate
+
+    text = copy_text(spec, side, entry, sl, tp, settings.account_type, lots, units, risk_cash, currency, reason if lots is None else None)
+    if warning and lots is not None:
+        text = text + "\n" + warning
+    return Quote(
+        lots=lots,
+        units=units,
+        unit=spec.unit,
+        risk_cash=risk_cash,
+        currency=currency,
+        min_lot=chosen.min_lot,
+        too_small=too_small,
+        reason=reason,
+        approximate=approximate,
+        standard_lots=standard.lots,
+        micro_lots=micro.lots,
+        scales_with_account=spec.scales_with_account,
+        uses_live_contract=uses_live,
+        contract_size=contract,
+        balance_source=source,
+        balance=balance,
+        blocked=blocked,
+        chase=chase_limit(entry, sl, spec.pip),
+        broker_symbol=broker_symbol,
+        copy=text,
+    )
+
+
+def symbol_or_none(symbol_id: str) -> Symbol | None:
+    return get_symbol(symbol_id)

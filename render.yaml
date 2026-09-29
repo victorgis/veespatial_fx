@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: signal-desk
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    envVars:
+      - key: ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: signal-desk-db
+          property: connectionString
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHANNEL_ID
+        sync: false
+      - key: CRON_KEY
+        generateValue: true
+      - key: SCHEDULER_ENABLED
+        value: "true"
+databases:
+  - name: signal-desk-db
+    plan: basic-256mb
