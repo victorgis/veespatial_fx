@@ -47,6 +47,7 @@ _CURRENT_HOUR_TTL = 60.0
 _hour_cache: dict[str, tuple[datetime, "FetchResult"]] = {}
 _yahoo_cache: dict[str, tuple[float, "FetchResult"]] = {}
 _massive_cache: dict[str, tuple[float, "FetchResult"]] = {}
+_massive_1h_cache: dict[str, tuple[datetime, list[Bar]]] = {}
 _YAHOO_TTL = 60
 _MASSIVE_TTL = 60
 _dukascopy_down_until: float = 0.0
@@ -363,9 +364,34 @@ class MassiveMarket(MarketData):
         if cached and now_ts - cached[0] < _MASSIVE_TTL:
             return cached[1]
         result = self._download(spec)
+        if result.error:
+            log.warning(
+                "%s: Massive API unavailable or rate limited (%s); trying Dukascopy bid feed",
+                spec.display,
+                result.error,
+            )
+            fallback_desk = DeskMarket().fetch(spec)
+            if fallback_desk.error is None and (fallback_desk.bars or fallback_desk.hourly):
+                log.info("%s: using %s", spec.display, fallback_desk.source)
+                return fallback_desk
+
+            log.warning("%s: Dukascopy unavailable; falling back to Yahoo Finance", spec.display)
+            fallback_yahoo = YahooMarket().fetch(spec)
+            if fallback_yahoo.error is None and (fallback_yahoo.bars or fallback_yahoo.hourly):
+                log.info("%s: using %s", spec.display, fallback_yahoo.source)
+                return fallback_yahoo
         if result.error is None:
             _massive_cache[spec.id] = (now_ts, result)
         return result
+
+    def _get_with_retry(self, client: httpx.Client, url: str, max_retries: int = 2) -> httpx.Response:
+        for attempt in range(max_retries + 1):
+            resp = client.get(url)
+            if resp.status_code == 429 and attempt < max_retries:
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            return resp
+        return resp
 
     def _download(self, spec: Symbol) -> FetchResult:
         if not self.api_key:
@@ -377,22 +403,32 @@ class MassiveMarket(MarketData):
         from_5m_str = (now_dt - timedelta(days=7)).strftime("%Y-%m-%d")
         from_1h_str = (now_dt - timedelta(days=90)).strftime("%Y-%m-%d")
 
+        hour_stamp = now_dt.replace(minute=0, second=0, microsecond=0)
+        cached_1h = _massive_1h_cache.get(spec.id)
+        bars_1h: list[Bar] = []
+
         try:
             with httpx.Client(timeout=10.0, follow_redirects=True) as client:
-                url_1h = (
-                    f"https://api.massive.com/v2/aggs/ticker/{ticker}/range/1/hour/"
-                    f"{from_1h_str}/{today_str}?adjusted=true&sort=asc&limit=50000&apiKey={self.api_key}"
-                )
-                resp_1h = client.get(url_1h)
-                if resp_1h.status_code != 200:
-                    return FetchResult([], "", f"{spec.display}: Massive API 1h request returned HTTP {resp_1h.status_code}")
-                data_1h = resp_1h.json()
-                results_1h = data_1h.get("results", [])
-                bars_1h: list[Bar] = []
-                for item in results_1h:
-                    dt = datetime.fromtimestamp(item["t"] / 1000.0, tz=timezone.utc)
-                    bars_1h.append(Bar(dt, float(item["o"]), float(item["h"]), float(item["l"]), float(item["c"])))
-                bars_1h = _closed(bars_1h)
+                if cached_1h and cached_1h[0] == hour_stamp:
+                    bars_1h = cached_1h[1]
+                else:
+                    url_1h = (
+                        f"https://api.massive.com/v2/aggs/ticker/{ticker}/range/1/hour/"
+                        f"{from_1h_str}/{today_str}?adjusted=true&sort=asc&limit=50000&apiKey={self.api_key}"
+                    )
+                    resp_1h = self._get_with_retry(client, url_1h)
+                    if resp_1h.status_code == 429:
+                        return FetchResult([], "", f"{spec.display}: Massive API rate limit (429)")
+                    if resp_1h.status_code != 200:
+                        return FetchResult([], "", f"{spec.display}: Massive API 1h request returned HTTP {resp_1h.status_code}")
+                    data_1h = resp_1h.json()
+                    results_1h = data_1h.get("results", [])
+                    for item in results_1h:
+                        dt = datetime.fromtimestamp(item["t"] / 1000.0, tz=timezone.utc)
+                        bars_1h.append(Bar(dt, float(item["o"]), float(item["h"]), float(item["l"]), float(item["c"])))
+                    bars_1h = _closed(bars_1h)
+                    if len(bars_1h) >= _MIN_BARS:
+                        _massive_1h_cache[spec.id] = (hour_stamp, bars_1h)
 
                 if len(bars_1h) < _MIN_BARS:
                     return FetchResult([], "", f"{spec.display}: Massive API returned {len(bars_1h)} closed hours (need {_MIN_BARS}).")
@@ -401,7 +437,9 @@ class MassiveMarket(MarketData):
                     f"https://api.massive.com/v2/aggs/ticker/{ticker}/range/5/minute/"
                     f"{from_5m_str}/{today_str}?adjusted=true&sort=asc&limit=50000&apiKey={self.api_key}"
                 )
-                resp_5m = client.get(url_5m)
+                resp_5m = self._get_with_retry(client, url_5m)
+                if resp_5m.status_code == 429:
+                    return FetchResult([], "", f"{spec.display}: Massive API rate limit (429)")
                 bars_5m: list[Bar] = []
                 if resp_5m.status_code == 200:
                     data_5m = resp_5m.json()

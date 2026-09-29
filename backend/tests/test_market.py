@@ -161,7 +161,7 @@ def test_massive_market_fetches_candles_and_respects_key(monkeypatch):
 
     # Test without key
     market_nokey = MassiveMarket("")
-    res_nokey = market_nokey.fetch(spec)
+    res_nokey = market_nokey._download(spec)
     assert "MASSIVE_API_KEY is not configured" in res_nokey.error
 
     # Mock httpx responses for 1h and 5m
@@ -204,5 +204,44 @@ def test_massive_market_fetches_candles_and_respects_key(monkeypatch):
     assert res.error is None
     assert "Massive API C:EURUSD" in res.source
     assert len(res.hourly) >= 220
+
+
+def test_massive_market_fallback_on_429(monkeypatch):
+    from app.market import MassiveMarket, FetchResult, clear_cache
+    from app.symbols import get_symbol
+    from app.strategy import Bar
+
+    clear_cache()
+    spec = get_symbol("eurusd")
+    assert spec is not None
+
+    class Fake429Client:
+        def __init__(self, *args, **kwargs):
+            pass
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+        def get(self, url):
+            class Resp:
+                status_code = 429
+            return Resp()
+
+    monkeypatch.setattr("httpx.Client", Fake429Client)
+
+    # Mock YahooMarket to verify fallback is called
+    dummy_bar = Bar(datetime.now(timezone.utc), 1.1, 1.1, 1.1, 1.1)
+    yahoo_fallback_result = FetchResult(
+        bars=[dummy_bar],
+        source="Yahoo Finance EURUSD=X",
+        hourly=[dummy_bar] * 220,
+    )
+    monkeypatch.setattr("app.market.YahooMarket.fetch", lambda self, spec: yahoo_fallback_result)
+
+    market = MassiveMarket("fake_key_123")
+    res = market.fetch(spec)
+    assert res.error is None
+    assert "Yahoo Finance" in res.source
+
 
 
