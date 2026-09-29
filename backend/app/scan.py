@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app.config import get_settings
 from app.database import session_scope
-from app.market import get_market
+from app.market import get_market, MassiveMarket
 from app.models import BotConfig, Delivery, LastPrice, ScanRun, Settings, Signal, User, utcnow
 from app.strategy import SignalDraft, StrategyParams, bar_hit
 from app.strategy import evaluate_intraday as evaluate
@@ -285,6 +285,33 @@ def _run() -> dict:
                 continue
             if draft is None:
                 continue
+            if cfg.massive_api_key.strip():
+                try:
+                    massive_mkt = MassiveMarket(cfg.massive_api_key.strip())
+                    massive_res = massive_mkt.fetch(spec)
+                    if massive_res.bars:
+                        massive_checked = evaluate(
+                            massive_res.bars,
+                            spec,
+                            params,
+                            hourly=massive_res.hourly,
+                            m15=massive_res.m15,
+                            m1=massive_res.m1,
+                        )
+                        massive_draft, _ = _split_decision(massive_checked)
+                        if massive_draft is not None:
+                            log.info(
+                                "%s: signal refined with Massive MT5 spot feed: %s @ %s (SL: %s, TP: %s)",
+                                spec.display,
+                                massive_draft.side,
+                                massive_draft.entry,
+                                massive_draft.sl,
+                                massive_draft.tp,
+                            )
+                            draft = massive_draft
+                except Exception as exc:
+                    log.warning("%s: Massive API spot refinement failed (%s); using Yahoo draft", spec.display, exc)
+
             recent = (
                 db.query(Signal)
                 .filter(Signal.symbol_id == symbol_id)
