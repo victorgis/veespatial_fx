@@ -105,20 +105,42 @@ def run_scan() -> dict:
         _lock.release()
 
 
+def _record_failure(now: datetime, created: int) -> None:
+    db = session_scope()
+    try:
+        db.add(
+            ScanRun(
+                started_at=now,
+                finished_at=utcnow(),
+                ok=False,
+                message="The scan stopped on an unexpected error.",
+                signals_created=created,
+            )
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+
 def _run() -> dict:
     cfg = get_settings()
     now = utcnow()
-    db = session_scope()
     created = 0
+    db = session_scope()
     try:
-        run = ScanRun(started_at=now, ok=False, message="", signals_created=0)
-        db.add(run)
-        db.flush()
-        market = get_market()
-        params = params_from_settings()
         ids = _watched_ids(db)
-        fetched = {}
-        failures: list[str] = []
+    finally:
+        db.close()
+
+    # Downloads can take minutes. The database stays closed until the prices are in hand,
+    # so a signup is not blocked behind the scan.
+    market = get_market()
+    params = params_from_settings()
+    fetched = {}
+    failures: list[str] = []
+    try:
         for symbol_id in ids:
             spec = get_symbol(symbol_id)
             if spec is None:
@@ -127,6 +149,18 @@ def _run() -> dict:
             fetched[symbol_id] = result
             if result.error or not result.bars:
                 failures.append(result.error or f"{spec.display}: no candles")
+    except Exception:
+        log.exception("scan failed")
+        _record_failure(now, created)
+        return {"status": "error", "message": "The scan stopped on an unexpected error.", "signals_created": created}
+
+    db = session_scope()
+    try:
+        run = ScanRun(started_at=now, ok=False, message="", signals_created=0)
+        db.add(run)
+        db.flush()
+        for symbol_id, result in fetched.items():
+            if not result.bars:
                 continue
             last = result.bars[-1]
             row = db.get(LastPrice, symbol_id)
@@ -240,18 +274,8 @@ def _run() -> dict:
     except Exception:
         log.exception("scan failed")
         db.rollback()
-        try:
-            fail = ScanRun(
-                started_at=now,
-                finished_at=utcnow(),
-                ok=False,
-                message="The scan stopped on an unexpected error.",
-                signals_created=created,
-            )
-            db.add(fail)
-            db.commit()
-        except Exception:
-            db.rollback()
+        db.close()
+        _record_failure(now, created)
         return {"status": "error", "message": "The scan stopped on an unexpected error.", "signals_created": created}
     finally:
         db.close()

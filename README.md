@@ -88,7 +88,7 @@ Set:
 
 - `ENV=production`
 - `JWT_SECRET` to a long random string
-- `DATABASE_URL` to the Postgres URL the host gives you (required — the disk is wiped on redeploy, so SQLite would lose accounts)
+- `DATABASE_URL` to a Postgres URL (required — the disk is wiped on redeploy, so SQLite would lose accounts). Neon’s pooled URL works. Keep `sslmode=require` and `channel_binding=require` on the end. Put it in the host’s environment, not in the repository.
 - `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHANNEL_ID`
 - `CRON_KEY` if you want an external scheduler
 

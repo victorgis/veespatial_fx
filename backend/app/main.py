@@ -44,6 +44,11 @@ async def lifespan(_app: FastAPI):
     cfg = get_settings()
     if cfg.env == "production" and cfg.jwt_secret == "dev-only-change-me":
         raise RuntimeError("Set JWT_SECRET before running with ENV=production.")
+    if cfg.env == "production" and cfg.database_url.startswith("sqlite"):
+        log.warning(
+            "DATABASE_URL is still SQLite. Set it to your Neon (or other Postgres) URL. "
+            "The Render disk is wiped on redeploy, and a scan can lock the file."
+        )
     init_db()
     scheduler = None
     if cfg.scheduler_enabled:

@@ -26,6 +26,14 @@ def normalize_db_url(url: str) -> str:
     return url
 
 
+def postgres_connect_args(url: str) -> dict:
+    """Neon’s pooled host is PgBouncer. Prepared statements collide there, so they stay off."""
+    host = url.split("@")[-1].split("/")[0].split("?")[0]
+    if "-pooler." in host or host.startswith("pooler."):
+        return {"prepare_threshold": None}
+    return {}
+
+
 def get_engine():
     global _engine
     if _engine is not None:
@@ -35,17 +43,23 @@ def get_engine():
         # Relative sqlite paths are from the process working directory.
         if url.startswith("sqlite:///./"):
             Path("data").mkdir(parents=True, exist_ok=True)
-        engine = create_engine(url, connect_args={"check_same_thread": False}, poolclass=NullPool)
+        engine = create_engine(
+            url,
+            connect_args={"check_same_thread": False, "timeout": 30},
+            poolclass=NullPool,
+        )
 
         @event.listens_for(engine, "connect")
         def _fk(dbapi_connection, _record):  # type: ignore[no-untyped-def]
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute("PRAGMA busy_timeout=30000")
             cursor.close()
 
         _engine = engine
         return engine
-    _engine = create_engine(url, pool_pre_ping=True)
+    _engine = create_engine(url, pool_pre_ping=True, connect_args=postgres_connect_args(url))
     return _engine
 
 
