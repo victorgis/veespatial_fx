@@ -86,7 +86,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         display="Gold",
         pair="Gold vs US dollar",
         group="metal",
-        yahoo=("XAUUSD=X", "GC=F"),
+        yahoo=("GC=F", "XAUUSD=X"),
         aliases=("GOLD", "GOLD#", "XAUUSD", "XAUUSD#", "GOLDmicro", "GOLDm#", "XAUUSDmicro", "XAUUSDm"),
         contract_standard=100,  # troy ounces
         scales_with_account=True,

@@ -12,6 +12,7 @@ the broker price has already left the signal.
 
 from __future__ import annotations
 
+import concurrent.futures
 import logging
 import lzma
 import struct
@@ -45,6 +46,8 @@ _CURRENT_HOUR_TTL = 60.0
 _hour_cache: dict[str, tuple[datetime, "FetchResult"]] = {}
 _yahoo_cache: dict[str, tuple[float, "FetchResult"]] = {}
 _YAHOO_TTL = 60
+_dukascopy_down_until: float = 0.0
+_DUKASCOPY_COOLDOWN_SECONDS = 150.0 #2.5 minutes
 
 
 class FetchResult:
@@ -460,11 +463,18 @@ class DeskMarket(MarketData):
         still printing is reread about once a minute, which is what lets a closed
         5-minute candle show up without waiting for the hour to finish.
         """
+        global _dukascopy_down_until
         now = datetime.now(timezone.utc)
+        now_mono = time.monotonic()
+
+        if now_mono < _dukascopy_down_until:
+            fallback = YahooMarket().fetch(spec)
+            if fallback.error is None and (fallback.bars or fallback.hourly):
+                return fallback
+
         result = self._dukascopy_fetch(spec, now)
         if result.error or not result.bars:
-            if result.error:
-                log.warning("%s: Dukascopy fetch failed: %s", spec.display, result.error)
+            _dukascopy_down_until = time.monotonic() + _DUKASCOPY_COOLDOWN_SECONDS
             fallback = YahooMarket().fetch(spec)
             if fallback.error is None and (fallback.bars or fallback.hourly):
                 log.info("%s: using %s", spec.display, fallback.source)
@@ -747,6 +757,8 @@ def get_market() -> MarketData:
 
 
 def clear_cache() -> None:
+    global _dukascopy_down_until
+    _dukascopy_down_until = 0.0
     _hour_cache.clear()
     _yahoo_cache.clear()
     _month_cache.clear()
