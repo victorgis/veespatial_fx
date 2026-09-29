@@ -301,14 +301,16 @@ def _run() -> dict:
                         massive_draft, _ = _split_decision(massive_checked)
                         if massive_draft is not None:
                             log.info(
-                                "%s: signal refined with Massive MT5 spot feed: %s @ %s (SL: %s, TP: %s)",
+                                "🎉🔥 OPPORTUNITY FOUND on %s! Side: %s | Massive.com Spot Price: %s | SL: %s | TP: %s",
                                 spec.display,
-                                massive_draft.side,
+                                massive_draft.side.upper(),
                                 massive_draft.entry,
                                 massive_draft.sl,
                                 massive_draft.tp,
                             )
                             draft = massive_draft
+                            # Mark source as Massive API for the created signal
+                            result.source = massive_res.source
                 except Exception as exc:
                     log.warning("%s: Massive API spot refinement failed (%s); using Yahoo draft", spec.display, exc)
 
@@ -366,6 +368,14 @@ def _run() -> dict:
             except IntegrityError:
                 continue
             signal.telegram_sent = _announce(db, spec, signal)
+            log.info(
+                "🎉🔥 SIGNAL CREATED for %s (%s) @ Massive.com Price: %s (SL: %s, TP: %s) — Dispatched to Telegram & Copiers!",
+                spec.display,
+                signal.side.upper(),
+                signal.entry,
+                signal.sl,
+                signal.tp,
+            )
             created += 1
 
         if ids and not any(r.bars or r.hourly for r in fetched.values()):

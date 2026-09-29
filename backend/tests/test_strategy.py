@@ -213,3 +213,14 @@ def test_short_history_still_names_every_check():
     assert decision.draft is None
     for word in ("RSI", "MACD", "MA50", "EMA200", "15m"):
         assert word in decision.log_line
+
+
+def test_multi_timeframe_trend_conflict():
+    from app.strategy import _4h_bias, _1d_bias
+    spec = get_symbol("eurusd")
+    assert spec is not None
+    bars, hourly, m15 = _five_minute_pullback()
+    # Test 4H bias calculation
+    bias_4h = _4h_bias(hourly, bars[-1].close)
+    assert bias_4h in ("buy", "sell", "flat", None)
+

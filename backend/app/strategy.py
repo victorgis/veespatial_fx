@@ -441,6 +441,77 @@ def _minute_confirms(side: str, m1: list[Bar] | None, now: datetime) -> bool:
     return last.close < last.open
 
 
+def _resample_bars(bars: list[Bar], minutes: int) -> list[Bar]:
+    if minutes <= 0 or not bars:
+        return []
+    buckets: dict[datetime, list[Bar]] = {}
+    for bar in bars:
+        t = bar.time if bar.time.tzinfo else bar.time.replace(tzinfo=timezone.utc)
+        if minutes == 240:
+            h_bucket = t.hour - (t.hour % 4)
+            bucket = t.replace(hour=h_bucket, minute=0, second=0, microsecond=0)
+        elif minutes >= 1440:
+            bucket = t.replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            bucket = t - timedelta(minutes=t.minute % minutes)
+        buckets.setdefault(bucket, []).append(bar)
+    out: list[Bar] = []
+    for bucket in sorted(buckets):
+        group = buckets[bucket]
+        out.append(
+            Bar(
+                bucket,
+                group[0].open,
+                max(b.high for b in group),
+                min(b.low for b in group),
+                group[-1].close,
+            )
+        )
+    return out
+
+
+def _4h_bias(hourly: list[Bar] | None, price: float) -> str | None:
+    if not hourly:
+        return None
+    h4 = _resample_bars(hourly, 240)
+    if len(h4) < 15:
+        return None
+    closes = [b.close for b in h4]
+    fast = ema(closes, 12)
+    slow = ema(closes, 26)
+    i = len(closes) - 1
+    if fast[i] is None or slow[i] is None:
+        return None
+    f_val, s_val = fast[i], slow[i]
+    assert f_val is not None and s_val is not None
+    if price > s_val and f_val > s_val:
+        return "buy"
+    if price < s_val and f_val < s_val:
+        return "sell"
+    return "flat"
+
+
+def _1d_bias(hourly: list[Bar] | None, price: float) -> str | None:
+    if not hourly:
+        return None
+    d1 = _resample_bars(hourly, 1440)
+    if len(d1) < 7:
+        return None
+    closes = [b.close for b in d1]
+    fast = ema(closes, 5)
+    slow = ema(closes, 15)
+    i = len(closes) - 1
+    if fast[i] is None or slow[i] is None:
+        return None
+    f_val, s_val = fast[i], slow[i]
+    assert f_val is not None and s_val is not None
+    if price > s_val and f_val >= s_val:
+        return "buy"
+    if price < s_val and f_val <= s_val:
+        return "sell"
+    return "flat"
+
+
 def _hourly_bias(hourly: list[Bar] | None, price: float, params: IntradayParams) -> tuple[str | None, str]:
     """Return 'buy', 'sell', or None, plus the EMA200 column text.
 
@@ -528,13 +599,27 @@ def evaluate_intraday(
         )
         return Decision(None, line)
 
-    bias, ema_txt = _hourly_bias(hourly, closes[i], tuned)
+    bias_1h, ema_txt = _hourly_bias(hourly, closes[i], tuned)
+    b4h = _4h_bias(hourly, closes[i])
+    b1d = _1d_bias(hourly, closes[i])
+
+    bias = bias_1h
+    trend_conflict: str | None = None
+
+    if bias_1h is not None:
+        if b4h is not None and b4h != "flat" and b4h != bias_1h:
+            bias = None
+            trend_conflict = f"no entry: 4-hour trend ({b4h}) conflicts with 1-hour trend ({bias_1h})"
+        elif b1d is not None and b1d != "flat" and b1d != bias_1h:
+            bias = None
+            trend_conflict = f"no entry: 1-day trend ({b1d}) conflicts with 1-hour trend ({bias_1h})"
+
     if not hourly or len(hourly) < tuned.ema_trend:
         trend_txt = "1h not ready"
     elif bias == "buy":
-        trend_txt = "1h uptrend"
+        trend_txt = "1h/4h uptrend" if b4h == "buy" else "1h uptrend"
     elif bias == "sell":
-        trend_txt = "1h downtrend"
+        trend_txt = "1h/4h downtrend" if b4h == "sell" else "1h downtrend"
     else:
         trend_txt = "1h flat"
 
@@ -549,6 +634,8 @@ def evaluate_intraday(
 
     if trend_txt == "1h not ready":
         return finish("no entry: 1-hour trend is not ready")
+    if trend_conflict is not None:
+        return finish(trend_conflict)
     if bias is None:
         return finish("no entry: 1-hour trend is flat")
     side = bias
