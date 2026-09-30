@@ -105,9 +105,6 @@ def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db))
             delivery.message = quote.reason or "No size was safe for this account."
             delivery.updated_at = utcnow()
             continue
-        if not quote.uses_live_contract:
-            waiting_specs = True
-            continue
         names = list(aliases_for(spec, row.alias_overrides))
         if quote.broker_symbol and quote.broker_symbol not in names:
             names.insert(0, quote.broker_symbol)
@@ -125,7 +122,7 @@ def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db))
             )
         )
     db.commit()
-    warn = "Waiting for contract sizes from the platform." if waiting_specs and not outgoing else ""
+    warn = ""
     return Response(content=format_orders(row.trade_mode, row.account_type, warn, outgoing), media_type="text/plain")
 
 
