@@ -44,9 +44,8 @@ export function Home() {
           <Banner
             tone="ok"
             title="Platform connected"
-            children={`${[conn.account_login, conn.broker].filter(Boolean).join(" at ") || "Heartbeat received."}${
-              conn.balance != null ? ` Balance ${conn.balance.toLocaleString()} ${conn.currency}.` : ""
-            }`}
+            children={`${[conn.account_login, conn.broker].filter(Boolean).join(" at ") || "Heartbeat received."}${conn.balance != null ? ` Balance ${conn.balance.toLocaleString()} ${conn.currency}.` : ""
+              }`}
           />
         ) : null}
         {me.user.is_admin && !data.me.telegram_configured ? (
@@ -57,7 +56,7 @@ export function Home() {
         ) : null}
         {error ? <p className="error">{error}</p> : null}
         {data.signals.length === 0 ? (
-          <div className="card empty">
+          <div className="card empty" style={{ marginRight: 10 }}>
             <strong>No open signal.</strong>
             <p>{data.scan.message} Last scan {when(data.scan.finished_at)}.</p>
           </div>
