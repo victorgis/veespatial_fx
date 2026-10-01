@@ -33,7 +33,7 @@ One signal per market at a time. After it closes, the next one on that market wa
 
 Every signal is posted to Telegram as soon as it appears. Automatic accounts do not take all of them. Three open automatic trades is the usual limit, and five is the most. Anything past that stays on Telegram and on the desk for a manual entry. The service log prints one line per market on every scan, with the 1-hour trend, RSI, MA50, EMA200, MACD, and the 15-minute structure, whether or not a trade is taken.
 
-Prices come from Dukascopy’s public bid feed. WTI and Brent there are cash CFDs (`LIGHTCMDUSD`, `BRENTCMDUSD`), so they can differ from XM’s OILCash and BRENTCash quotes. If that feed is unreachable, the hourly trend can fall back to Yahoo Finance, but a new trade still needs a fresh 5-minute candle. The copier skips an order if the broker price has already moved more than a quarter of the way to the stop.
+Prices come from Massive.com’s real-time market data feed. WTI and Brent there are cash CFDs (`LIGHTCMDUSD`, `BRENTCMDUSD`), so they match XM’s OILCash and BRENTCash quotes. If that feed is unreachable, the hourly trend can fall back to Yahoo Finance, but a new trade still needs a fresh 5-minute candle. The copier skips an order if the broker price has already moved more than a quarter of the way to the stop.
 
 This is a rules alert. It is not a promise of profit, and it is not a measured win rate. A stop can be skipped in a fast market.
 

@@ -102,7 +102,7 @@ export function Guide() {
             channel and on this desk for you to place by hand.
           </p>
           <p className="help">
-            Prices come from Dukascopy’s public bid feed. WTI and Brent there are cash CFDs, so they can differ from
+            Prices come from Massive.com’s real-time market data feed. WTI and Brent there are cash CFDs, matching
             XM’s OILCash and BRENTCash. The copier skips the order if the broker price has already moved more than a
             quarter of the way to the stop.
           </p>

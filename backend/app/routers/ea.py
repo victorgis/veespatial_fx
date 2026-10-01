@@ -121,6 +121,8 @@ def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db))
                 comment=f"fx{delivery.id}",
             )
         )
+        delivery.status = "dispatched"
+        delivery.updated_at = utcnow()
     db.commit()
     warn = ""
     return Response(content=format_orders(row.trade_mode, row.account_type, warn, outgoing), media_type="text/plain")

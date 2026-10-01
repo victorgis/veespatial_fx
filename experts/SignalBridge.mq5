@@ -165,6 +165,26 @@ void Report(const string id, const string status, const ulong ticket, const doub
    Http("POST", "/api/ea/executions", body, response, code);
 }
 
+string ProcessedIds[];
+
+bool IsDeliveryProcessed(const string id)
+{
+   int total = ArraySize(ProcessedIds);
+   for(int i = 0; i < total; i++)
+   {
+      if(ProcessedIds[i] == id) return true;
+   }
+   return false;
+}
+
+void MarkDeliveryProcessed(const string id)
+{
+   if(IsDeliveryProcessed(id)) return;
+   int total = ArraySize(ProcessedIds);
+   ArrayResize(ProcessedIds, total + 1);
+   ProcessedIds[total] = id;
+}
+
 bool FindPosition(const string comment, ulong &ticket, double &price, double &lots, string &symbol)
 {
    for(int i = PositionsTotal() - 1; i >= 0; i--)
@@ -172,7 +192,8 @@ bool FindPosition(const string comment, ulong &ticket, double &price, double &lo
       ulong t = PositionGetTicket(i);
       if(t == 0 || !PositionSelectByTicket(t)) continue;
       if((int)PositionGetInteger(POSITION_MAGIC) != Magic) continue;
-      if(PositionGetString(POSITION_COMMENT) != comment) continue;
+      string posComment = PositionGetString(POSITION_COMMENT);
+      if(posComment != comment && StringFind(posComment, comment) < 0) continue;
       ticket = t;
       price = PositionGetDouble(POSITION_PRICE_OPEN);
       lots = PositionGetDouble(POSITION_VOLUME);
@@ -219,11 +240,18 @@ void PlaceLine(const string line)
    string comment = parts[8];
    StringTrimRight(comment);
 
+   if(IsDeliveryProcessed(id))
+   {
+      LastNote = "Order " + id + " already processed, skipping duplicate.";
+      return;
+   }
+
    ulong existing = 0;
    double openPrice = 0, openLots = 0;
    string openSymbol = "";
    if(FindPosition(comment, existing, openPrice, openLots, openSymbol))
    {
+      MarkDeliveryProcessed(id);
       Report(id, "placed", existing, openPrice, openLots, openSymbol, "already open");
       LastNote = comment + " is already open, ticket " + IntegerToString((int)existing) + ".";
       return;
@@ -315,6 +343,7 @@ void PlaceLine(const string line)
       LastNote = chosen + " order was rejected (" + IntegerToString((int)res.retcode) + ").";
       return;
    }
+   MarkDeliveryProcessed(id);
    Report(id, "placed", res.order, res.price > 0 ? res.price : price, res.volume > 0 ? res.volume : lots, chosen, "filled");
    LastNote = chosen + " " + side + " filled, ticket " + IntegerToString((int)res.order) + ".";
 }
