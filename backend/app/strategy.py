@@ -699,19 +699,12 @@ def evaluate_intraday(
     if bias is None:
         return finish("no entry: 1-hour trend is flat")
     side = bias
-
-    # 1H ADX Trend Strength Filter
-    adx_v = adx(hourly, 14) if hourly else []
-    cur_adx = adx_v[-1] if (adx_v and adx_v[-1] is not None) else None
-    if cur_adx is not None and cur_adx < 20.0:
-        return finish(f"no entry: 1-hour ADX {cur_adx:.0f} is weak (< 20)")
-
     if not structure_allows(structure, side):
         return finish(f"no entry: 15-minute structure is {structure.label}")
 
     # 5m Liquidity Sweep Filter
-    if not _swept_liquidity(bars, side):
-        return finish("no entry: price has not swept 20-bar liquidity")
+    # if not _swept_liquidity(bars, side):
+    #     return finish("no entry: price has not swept 20-bar liquidity")
 
     lo, hi = tuned.buy_rsi if side == "buy" else tuned.sell_rsi
     if not (lo <= cur_rsi <= hi):

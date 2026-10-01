@@ -169,6 +169,8 @@ string ProcessedIds[];
 
 bool IsDeliveryProcessed(const string id)
 {
+   string name = "SB_Delivery_" + id;
+   if(GlobalVariableCheck(name)) return true;
    int total = ArraySize(ProcessedIds);
    for(int i = 0; i < total; i++)
    {
@@ -179,6 +181,8 @@ bool IsDeliveryProcessed(const string id)
 
 void MarkDeliveryProcessed(const string id)
 {
+   string name = "SB_Delivery_" + id;
+   GlobalVariableSet(name, (double)TimeCurrent());
    if(IsDeliveryProcessed(id)) return;
    int total = ArraySize(ProcessedIds);
    ArrayResize(ProcessedIds, total + 1);

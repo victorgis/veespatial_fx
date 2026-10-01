@@ -86,6 +86,7 @@ def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db))
         .join(Signal, Signal.id == Delivery.signal_id)
         .filter(Delivery.user_id == user.id, Delivery.status == "queued", Signal.status == "active")
         .order_by(Signal.id.asc())
+        .with_for_update()
         .all()
     )
     outgoing: list[OrderOut] = []
