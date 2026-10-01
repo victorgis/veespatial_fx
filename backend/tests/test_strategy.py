@@ -101,7 +101,7 @@ def test_swing_structure_reads_higher_highs_and_lower_lows():
 
 def test_stop_widens_a_tiny_swing_and_skips_a_huge_one():
     normal = stop_distance("buy", 1.10, 1.0990, 0.001, 0.0001)
-    assert normal is not None and abs(normal - 0.0011) < 1e-9
+    assert normal is not None and abs(normal - 0.0015) < 1e-9
     tight = stop_distance("buy", 1.10, 1.0999, 0.001, 0.0001)
     assert tight is not None and abs(tight - 0.0008) < 1e-9
     assert stop_distance("buy", 1.10, 1.090, 0.001, 0.0001) is None
@@ -169,7 +169,7 @@ def test_five_minute_pullback_publishes_inside_the_hour_trend():
     assert decision.draft.sl < decision.draft.entry < decision.draft.tp
     reward = decision.draft.tp - decision.draft.entry
     risk = decision.draft.entry - decision.draft.sl
-    assert abs(reward / risk - 1.8) < 0.05
+    assert abs(reward / risk - 2.0) < 0.05
     for word in ("RSI", "MACD", "MA50", "EMA200", "15m", "entry: buy"):
         assert word in decision.log_line
 

@@ -63,7 +63,7 @@ def test_live_ticks_match_the_contract_math():
 
 
 def test_chase_limit_is_a_quarter_of_the_stop():
-    assert chase_limit(1.10, 1.09, 0.0001) == pytest.approx(0.0025)
+    assert chase_limit(1.10, 1.09, 0.0001) == pytest.approx(0.0040)
 
 
 def test_alias_override_rejects_unknown_markets():

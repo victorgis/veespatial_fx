@@ -43,7 +43,7 @@ def default_min_lot(spec: Symbol, account_type: str, platform: str) -> float:
 
 def chase_limit(entry: float, sl: float, pip: float) -> float:
     """How far price may run from the signal before the copier refuses to chase."""
-    return max(abs(entry - sl) * 0.25, pip * 2)
+    return max(abs(entry - sl) * 0.40, pip * 5)
 
 
 def _finish(

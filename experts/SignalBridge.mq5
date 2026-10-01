@@ -279,15 +279,20 @@ void PlaceLine(const string line)
       return;
    }
    double point = SymbolInfoDouble(chosen, SYMBOL_POINT);
+   int digits = (int)SymbolInfoInteger(chosen, SYMBOL_DIGITS);
+   double slDist = MathAbs(entry - sl);
+   double tpDist = MathAbs(entry - tp);
+   double final_sl = (side == "buy") ? (price - slDist) : (price + slDist);
+   double final_tp = (side == "buy") ? (price + tpDist) : (price - tpDist);
+
    int stops = (int)SymbolInfoInteger(chosen, SYMBOL_TRADE_STOPS_LEVEL);
    double minDist = stops * point;
-   if(minDist > 0 && (MathAbs(price - sl) < minDist || MathAbs(price - tp) < minDist))
+   if(minDist > 0 && (MathAbs(price - final_sl) < minDist || MathAbs(price - final_tp) < minDist))
    {
       Report(id, "not_placed", 0, price, lots, chosen, "Stop or target is closer than the broker allows.");
       LastNote = chosen + " rejected the stop distance.";
       return;
    }
-   int digits = (int)SymbolInfoInteger(chosen, SYMBOL_DIGITS);
    MqlTradeRequest req;
    MqlTradeResult res;
    ZeroMemory(req);
@@ -297,8 +302,8 @@ void PlaceLine(const string line)
    req.volume = lots;
    req.type = (side == "buy") ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    req.price = price;
-   req.sl = NormalizeDouble(sl, digits);
-   req.tp = NormalizeDouble(tp, digits);
+   req.sl = NormalizeDouble(final_sl, digits);
+   req.tp = NormalizeDouble(final_tp, digits);
    req.deviation = SlippagePoints;
    req.magic = Magic;
    req.comment = comment;

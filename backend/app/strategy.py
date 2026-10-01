@@ -118,6 +118,66 @@ def atr(bars: list[Bar], n: int) -> list[float | None]:
     return out
 
 
+def adx(bars: list[Bar], n: int = 14) -> list[float | None]:
+    """Average Directional Index (ADX) measuring trend strength over `n` periods."""
+    out: list[float | None] = [None] * len(bars)
+    if n <= 0 or len(bars) <= n * 2:
+        return out
+    tr_l: list[float] = [0.0]
+    plus_dm_l: list[float] = [0.0]
+    minus_dm_l: list[float] = [0.0]
+    for i in range(1, len(bars)):
+        curr, prev = bars[i], bars[i - 1]
+        tr = max(curr.high - curr.low, abs(curr.high - prev.close), abs(curr.low - prev.close))
+        up_move = curr.high - prev.high
+        down_move = prev.low - curr.low
+        plus_dm = up_move if (up_move > down_move and up_move > 0) else 0.0
+        minus_dm = down_move if (down_move > up_move and down_move > 0) else 0.0
+        tr_l.append(tr)
+        plus_dm_l.append(plus_dm)
+        minus_dm_l.append(minus_dm)
+
+    smooth_tr = sum(tr_l[1 : n + 1])
+    smooth_pdm = sum(plus_dm_l[1 : n + 1])
+    smooth_mdm = sum(minus_dm_l[1 : n + 1])
+
+    dx_l: list[float] = []
+    for i in range(n, len(bars)):
+        if i > n:
+            smooth_tr = smooth_tr - (smooth_tr / n) + tr_l[i]
+            smooth_pdm = smooth_pdm - (smooth_pdm / n) + plus_dm_l[i]
+            smooth_mdm = smooth_mdm - (smooth_mdm / n) + minus_dm_l[i]
+        p_di = 100.0 * (smooth_pdm / smooth_tr) if smooth_tr > 0 else 0.0
+        m_di = 100.0 * (smooth_mdm / smooth_tr) if smooth_tr > 0 else 0.0
+        denom = p_di + m_di
+        dx = 100.0 * (abs(p_di - m_di) / denom) if denom > 0 else 0.0
+        dx_l.append(dx)
+
+    if len(dx_l) < n:
+        return out
+    adx_val = sum(dx_l[:n]) / n
+    out[n * 2 - 1] = adx_val
+    for j in range(n, len(dx_l)):
+        adx_val = (adx_val * (n - 1) + dx_l[j]) / n
+        out[n + j] = adx_val
+    return out
+
+
+def _swept_liquidity(bars: list[Bar], side: str, window: int = 20) -> bool:
+    """Check if recent 5m price dipped below/above recent 20-bar swing low/high."""
+    if len(bars) < window + 2:
+        return True
+    sub = bars[-(window + 2):]
+    if side == "buy":
+        recent_lows = [b.low for b in sub[-5:]]
+        past_lowest = min(b.low for b in sub[:-5])
+        return any(low < past_lowest for low in recent_lows)
+    else:
+        recent_highs = [b.high for b in sub[-5:]]
+        past_highest = max(b.high for b in sub[:-5])
+        return any(high > past_highest for high in recent_highs)
+
+
 def decide(prev: Snapshot, cur: Snapshot, params: StrategyParams | None = None) -> str | None:
     params = params or StrategyParams()
     bull = prev.ema_fast <= prev.ema_slow and cur.ema_fast > cur.ema_slow
@@ -212,7 +272,7 @@ class IntradayParams:
     sell_rsi: tuple[float, float] = (42, 60)
     min_stop_atr: float = 0.8
     max_stop_atr: float = 2.0
-    target_r: float = 1.8
+    target_r: float = 2.0
 
 
 @dataclass(frozen=True)
@@ -315,7 +375,7 @@ def stop_distance(
     params = params or IntradayParams()
     if atr_value <= 0:
         return None
-    buffer = max(pip, atr_value * 0.05)
+    buffer = max(pip * 2, atr_value * 0.50)
     if side == "buy":
         distance = entry - (swing - buffer)
     else:
@@ -639,8 +699,19 @@ def evaluate_intraday(
     if bias is None:
         return finish("no entry: 1-hour trend is flat")
     side = bias
+
+    # 1H ADX Trend Strength Filter
+    adx_v = adx(hourly, 14) if hourly else []
+    cur_adx = adx_v[-1] if (adx_v and adx_v[-1] is not None) else None
+    if cur_adx is not None and cur_adx < 20.0:
+        return finish(f"no entry: 1-hour ADX {cur_adx:.0f} is weak (< 20)")
+
     if not structure_allows(structure, side):
         return finish(f"no entry: 15-minute structure is {structure.label}")
+
+    # 5m Liquidity Sweep Filter
+    if not _swept_liquidity(bars, side):
+        return finish("no entry: price has not swept 20-bar liquidity")
 
     lo, hi = tuned.buy_rsi if side == "buy" else tuned.sell_rsi
     if not (lo <= cur_rsi <= hi):

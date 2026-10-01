@@ -124,12 +124,48 @@ def _resolve(signal: Signal, bars, now: datetime, expiry_hours: int) -> tuple[st
         t = bar.time if bar.time.tzinfo else bar.time.replace(tzinfo=timezone.utc)
         if t > signal.candle_time:
             future.append(bar)
+
+    risk = abs(signal.entry - signal.sl)
+    if risk <= 0:
+        risk = 0.0001
+
+    current_sl = signal.sl
+    max_favorable = 0.0
+
     for bar in future:
-        hit = bar_hit(signal.side, signal.sl, signal.tp, bar.high, bar.low)
-        if hit == "stopped":
-            return "stopped", signal.sl
-        if hit == "target":
-            return "target", signal.tp
+        if signal.side == "buy":
+            favorable = bar.high - signal.entry
+            if favorable > max_favorable:
+                max_favorable = favorable
+            if max_favorable >= 1.7 * risk:
+                current_sl = max(current_sl, signal.entry + 1.0 * risk)
+            elif max_favorable >= 1.4 * risk:
+                current_sl = max(current_sl, signal.entry + 0.1 * risk)
+            elif max_favorable >= 1.0 * risk:
+                current_sl = max(current_sl, signal.entry - 0.25 * risk)
+
+            if bar.low <= current_sl:
+                outcome = "breakeven" if current_sl >= signal.entry else "stopped"
+                return outcome, current_sl
+            if bar.high >= signal.tp:
+                return "target", signal.tp
+        else:
+            favorable = signal.entry - bar.low
+            if favorable > max_favorable:
+                max_favorable = favorable
+            if max_favorable >= 1.7 * risk:
+                current_sl = min(current_sl, signal.entry - 1.0 * risk)
+            elif max_favorable >= 1.4 * risk:
+                current_sl = min(current_sl, signal.entry - 0.1 * risk)
+            elif max_favorable >= 1.0 * risk:
+                current_sl = min(current_sl, signal.entry + 0.25 * risk)
+
+            if bar.high >= current_sl:
+                outcome = "breakeven" if current_sl <= signal.entry else "stopped"
+                return outcome, current_sl
+            if bar.low <= signal.tp:
+                return "target", signal.tp
+
     age = now - (signal.candle_time if signal.candle_time.tzinfo else signal.candle_time.replace(tzinfo=timezone.utc))
     if age > timedelta(hours=expiry_hours) and bars:
         return "expired", bars[-1].close
