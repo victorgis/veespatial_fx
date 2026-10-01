@@ -103,10 +103,27 @@ string Heartbeat()
       "EURUSD","EURUSDm","EURUSDmicro","EURUSD#",
       "GBPUSD","GBPUSDm","GBPUSDmicro","GBPUSD#",
       "USDJPY","USDJPYm","USDJPYmicro","USDJPY#",
-      "USDCHF","AUDUSD","USDCAD","NZDUSD","EURGBP","EURJPY","GBPJPY",
+      "USDCHF","USDCHFm","USDCHFmicro","USDCHF#",
+      "AUDUSD","AUDUSDm","AUDUSDmicro","AUDUSD#",
+      "USDCAD","USDCADm","USDCADmicro","USDCAD#",
+      "NZDUSD","NZDUSDm","NZDUSDmicro","NZDUSD#",
+      "EURGBP","EURGBPm","EURGBPmicro","EURGBP#",
+      "EURJPY","EURJPYm","EURJPYmicro","EURJPY#",
+      "GBPJPY","GBPJPYm","GBPJPYmicro","GBPJPY#",
       "GOLD","GOLD#","XAUUSD","XAUUSD#","GOLDmicro","GOLDm#",
+      "SILVER","SILVER#","XAGUSD","XAGUSD#","SILVERmicro","SILVERm#",
       "OILCash","OILCash#","USOIL","WTI","XTIUSD",
-      "BRENTCash","BRENTCash#","UKOIL","XBRUSD"
+      "BRENTCash","BRENTCash#","UKOIL","XBRUSD",
+      "COPPER","COPPER#","COPPERCash","COPPER.c","HGCOPPER",
+      "NGAS","NGAS#","NGASCash","NATGAS","NATGASCash","NGAS.c",
+      "SOYBEAN","SOYBEAN#","SOYBEANCash","SOYBEAN.c","SOY",
+      "US30","US30Cash","US30Cash#","US30#","DJ30","USA30","US30.pro","US30.m","WS30",
+      "US100","US100Cash","US100Cash#","US100#","NAS100","USTECH","US100.pro","US100.m",
+      "US500","US500Cash","US500Cash#","US500#","SPX500","US500.pro","US500.m",
+      "GER40","GER40Cash","GER40Cash#","GER40#","DE40","GER30","GER40.pro","GER40.m",
+      "JP225","JP225Cash","JP225Cash#","JP225#","JPN225","JP225.pro","JP225.m",
+      "VOLX","VOLXCash","VIX","VOLX#","VIX#","VOLX.c","VIX.c",
+      "USDX","USDXCash","DXY","USDX#","DXY#","USDX.c"
    };
    string fxName = "";
    double fxContract = 0;

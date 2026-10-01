@@ -270,8 +270,8 @@ class IntradayParams:
     swing_wing: int = 2
     buy_rsi: tuple[float, float] = (40, 58)
     sell_rsi: tuple[float, float] = (42, 60)
-    min_stop_atr: float = 0.8
-    max_stop_atr: float = 2.0
+    min_stop_atr: float = 1.5
+    max_stop_atr: float = 2.5
     target_r: float = 2.0
 
 
@@ -365,17 +365,18 @@ def stop_distance(
     atr_value: float,
     pip: float,
     params: IntradayParams | None = None,
+    spread_pips: float = 0.0,
 ) -> float | None:
     """Distance from entry to a stop beyond the swing.
 
-    A stop tighter than 0.8× ATR is widened to that floor so the spread does
-    not take it immediately. A swing farther than 2× ATR is skipped: clamping
-    it would hide the stop inside the swing.
+    A stop tighter than 1.5× ATR is widened to that floor so the spread does
+    not take it immediately. A swing farther than 2.5× ATR is skipped.
     """
     params = params or IntradayParams()
     if atr_value <= 0:
         return None
-    buffer = max(pip * 2, atr_value * 0.50)
+    spread_buf = max(spread_pips * pip, pip * 3.0)
+    buffer = max(spread_buf, atr_value * 0.50)
     if side == "buy":
         distance = entry - (swing - buffer)
     else:

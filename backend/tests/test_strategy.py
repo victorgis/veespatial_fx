@@ -103,7 +103,7 @@ def test_stop_widens_a_tiny_swing_and_skips_a_huge_one():
     normal = stop_distance("buy", 1.10, 1.0990, 0.001, 0.0001)
     assert normal is not None and abs(normal - 0.0015) < 1e-9
     tight = stop_distance("buy", 1.10, 1.0999, 0.001, 0.0001)
-    assert tight is not None and abs(tight - 0.0008) < 1e-9
+    assert tight is not None and abs(tight - 0.0015) < 1e-9
     assert stop_distance("buy", 1.10, 1.090, 0.001, 0.0001) is None
 
 
