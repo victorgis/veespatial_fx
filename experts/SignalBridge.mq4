@@ -286,8 +286,6 @@ void PlaceLine(string line)
    {
       Report(id, "not_placed", 0, price, lots, chosen, "Stop or target is closer than the broker allows.");
       return;
-   }
-   int digits = (int)MarketInfo(chosen, MODE_DIGITS);
    int cmd = (side == "buy") ? OP_BUY : OP_SELL;
    int ticket = OrderSend(chosen, cmd, lots, NormalizeDouble(price, digits), SlippagePoints, NormalizeDouble(sl, digits), NormalizeDouble(tp, digits), comment, Magic, 0, clrNONE);
    if(ticket < 0)

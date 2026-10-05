@@ -336,7 +336,6 @@ void PlaceLine(const string line)
       return;
    }
    double point = SymbolInfoDouble(chosen, SYMBOL_POINT);
-   int digits = (int)SymbolInfoInteger(chosen, SYMBOL_DIGITS);
    double slDist = MathAbs(entry - sl);
    double tpDist = MathAbs(entry - tp);
    double final_sl = (side == "buy") ? (price - slDist) : (price + slDist);
