@@ -94,6 +94,8 @@ bool UseSymbol(const string name)
 {
    if(StringLen(name) < 2) return false;
    if(!SymbolSelect(name, true)) return false;
+   long mode = SymbolInfoInteger(name, SYMBOL_TRADE_MODE);
+   if(mode == SYMBOL_TRADE_MODE_DISABLED) return false;
    return (SymbolInfoDouble(name, SYMBOL_ASK) > 0 || SymbolInfoDouble(name, SYMBOL_BID) > 0);
 }
 
@@ -307,7 +309,13 @@ void PlaceLine(const string line)
       return;
    }
    int spread = (int)SymbolInfoInteger(chosen, SYMBOL_SPREAD);
-   if(MaxSpreadPoints > 0 && spread > MaxSpreadPoints)
+   int digits = (int)SymbolInfoInteger(chosen, SYMBOL_DIGITS);
+   int maxSpread = MaxSpreadPoints;
+   if(MaxSpreadPoints > 0 && (digits <= 2 || StringFind(chosen, "GOLD") >= 0 || StringFind(chosen, "XAU") >= 0 || StringFind(chosen, "SILVER") >= 0 || StringFind(chosen, "XAG") >= 0 || StringFind(chosen, "OIL") >= 0 || StringFind(chosen, "BRENT") >= 0 || StringFind(chosen, "US30") >= 0 || StringFind(chosen, "US100") >= 0 || StringFind(chosen, "US500") >= 0 || StringFind(chosen, "GER40") >= 0 || StringFind(chosen, "JP225") >= 0 || StringFind(chosen, "VOLX") >= 0 || StringFind(chosen, "VIX") >= 0))
+   {
+      maxSpread = MaxSpreadPoints * 15;
+   }
+   if(MaxSpreadPoints > 0 && spread > maxSpread)
    {
       Report(id, "not_placed", 0, 0, 0, chosen, "Spread is wider than the copier allows.");
       LastNote = chosen + " spread is " + IntegerToString(spread) + " points.";

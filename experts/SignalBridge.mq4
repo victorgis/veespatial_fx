@@ -89,6 +89,7 @@ bool UseSymbol(string name)
 {
    if(StringLen(name) < 2) return false;
    if(!SymbolSelect(name, true)) return false;
+   if(MarketInfo(name, MODE_TRADEALLOWED) == 0) return false;
    return (MarketInfo(name, MODE_BID) > 0 || MarketInfo(name, MODE_ASK) > 0);
 }
 
@@ -254,7 +255,13 @@ void PlaceLine(string line)
       return;
    }
    int spread = (int)MarketInfo(chosen, MODE_SPREAD);
-   if(MaxSpreadPoints > 0 && spread > MaxSpreadPoints)
+   int digits = (int)MarketInfo(chosen, MODE_DIGITS);
+   int maxSpread = MaxSpreadPoints;
+   if(MaxSpreadPoints > 0 && (digits <= 2 || StringFind(chosen, "GOLD") >= 0 || StringFind(chosen, "XAU") >= 0 || StringFind(chosen, "SILVER") >= 0 || StringFind(chosen, "XAG") >= 0 || StringFind(chosen, "OIL") >= 0 || StringFind(chosen, "BRENT") >= 0 || StringFind(chosen, "US30") >= 0 || StringFind(chosen, "US100") >= 0 || StringFind(chosen, "US500") >= 0 || StringFind(chosen, "GER40") >= 0 || StringFind(chosen, "JP225") >= 0 || StringFind(chosen, "VOLX") >= 0 || StringFind(chosen, "VIX") >= 0))
+   {
+      maxSpread = MaxSpreadPoints * 15;
+   }
+   if(MaxSpreadPoints > 0 && spread > maxSpread)
    {
       Report(id, "not_placed", 0, 0, 0, chosen, "Spread is wider than the copier allows.");
       return;
