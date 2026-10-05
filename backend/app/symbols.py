@@ -56,7 +56,7 @@ def _fx(
         pair=pair,
         group="currency",
         yahoo=(yahoo,),
-        aliases=(base, base + "m", base + "micro", base + "#", base + ".", base + ".m"),
+        aliases=(base, base + "m", base + "micro", base + "#", base + "m#", base + ".", base + ".m"),
         contract_standard=100_000,
         scales_with_account=True,
         pip=pip,

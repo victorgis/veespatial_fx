@@ -3,8 +3,8 @@
 from datetime import datetime, timedelta, timezone
 
 from app.market import (
-    MassiveMarket,
     FetchResult,
+    YahooMarket,
     clear_cache,
     drop_forming,
     get_market,
@@ -54,92 +54,4 @@ def test_chat_not_found_names_the_channel_id_and_hides_the_token():
     assert "api.telegram.org" not in text
 
 
-def test_massive_market_fetches_candles_and_respects_key(monkeypatch):
-    from app.symbols import get_symbol
 
-    clear_cache()
-    set_market_override(None)
-    spec = get_symbol("eurusd")
-    assert spec is not None
-
-    # Test without key
-    market_nokey = MassiveMarket("")
-    res_nokey = market_nokey._download(spec)
-    assert "MASSIVE_API_KEY is not configured" in res_nokey.error
-
-    # Mock httpx responses for 1h and 5m
-    class FakeResponse:
-        def __init__(self, status_code, data):
-            self.status_code = status_code
-            self._data = data
-
-        def json(self):
-            return self._data
-
-    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
-    fake_results_1h = [
-        {"t": now_ms - (i * 3600 * 1000), "o": 1.10, "h": 1.11, "l": 1.09, "c": 1.10, "v": 100}
-        for i in range(250, 0, -1)
-    ]
-    fake_results_5m = [
-        {"t": now_ms - (i * 300 * 1000), "o": 1.10, "h": 1.11, "l": 1.09, "c": 1.10, "v": 10}
-        for i in range(50, 0, -1)
-    ]
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-        def __enter__(self):
-            return self
-        def __exit__(self, *args):
-            pass
-        def get(self, url):
-            if "/range/1/hour/" in url:
-                return FakeResponse(200, {"results": fake_results_1h, "status": "OK"})
-            if "/range/5/minute/" in url:
-                return FakeResponse(200, {"results": fake_results_5m, "status": "OK"})
-            return FakeResponse(404, {})
-
-    monkeypatch.setattr("httpx.Client", FakeClient)
-
-    market = MassiveMarket("fake_key_123")
-    res = market.fetch(spec)
-    assert res.error is None
-    assert "Massive API C:EURUSD" in res.source
-    assert len(res.hourly) >= 220
-
-
-def test_massive_market_fallback_on_429(monkeypatch):
-    from app.symbols import get_symbol
-
-    clear_cache()
-    spec = get_symbol("eurusd")
-    assert spec is not None
-
-    class Fake429Client:
-        def __init__(self, *args, **kwargs):
-            pass
-        def __enter__(self):
-            return self
-        def __exit__(self, *args):
-            pass
-        def get(self, url):
-            class Resp:
-                status_code = 429
-            return Resp()
-
-    monkeypatch.setattr("httpx.Client", Fake429Client)
-
-    # Mock YahooMarket to verify fallback is called
-    dummy_bar = Bar(datetime.now(timezone.utc), 1.1, 1.1, 1.1, 1.1)
-    yahoo_fallback_result = FetchResult(
-        bars=[dummy_bar],
-        source="Yahoo Finance EURUSD=X",
-        hourly=[dummy_bar] * 220,
-    )
-    monkeypatch.setattr("app.market.YahooMarket.fetch", lambda self, spec: yahoo_fallback_result)
-
-    market = MassiveMarket("fake_key_123")
-    res = market.fetch(spec)
-    assert res.error is None
-    assert "Yahoo Finance" in res.source

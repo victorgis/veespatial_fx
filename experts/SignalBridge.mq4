@@ -95,10 +95,30 @@ bool UseSymbol(string name)
 string Heartbeat()
 {
    string names[] = {
-      "EURUSD","EURUSDm","EURUSDmicro","EURUSD#",
-      "GBPUSD","USDJPY","USDCHF","AUDUSD","USDCAD","NZDUSD","EURGBP","EURJPY","GBPJPY",
-      "GOLD","GOLD#","XAUUSD","GOLDmicro",
-      "OILCash","BRENTCash","USOIL","UKOIL"
+      "EURUSD","EURUSDm","EURUSDmicro","EURUSD#","EURUSDm#",
+      "GBPUSD","GBPUSDm","GBPUSDmicro","GBPUSD#","GBPUSDm#",
+      "USDJPY","USDJPYm","USDJPYmicro","USDJPY#","USDJPYm#",
+      "USDCHF","USDCHFm","USDCHFmicro","USDCHF#","USDCHFm#",
+      "AUDUSD","AUDUSDm","AUDUSDmicro","AUDUSD#","AUDUSDm#",
+      "USDCAD","USDCADm","USDCADmicro","USDCAD#","USDCADm#",
+      "NZDUSD","NZDUSDm","NZDUSDmicro","NZDUSD#","NZDUSDm#",
+      "EURGBP","EURGBPm","EURGBPmicro","EURGBP#","EURGBPm#",
+      "EURJPY","EURJPYm","EURJPYmicro","EURJPY#","EURJPYm#",
+      "GBPJPY","GBPJPYm","GBPJPYmicro","GBPJPY#","GBPJPYm#",
+      "GOLD","GOLD#","XAUUSD","XAUUSD#","GOLDmicro","GOLDm#",
+      "SILVER","SILVER#","XAGUSD","XAGUSD#","SILVERmicro","SILVERm#","SILVERm",
+      "OILCash","OILCash#","USOIL","WTI","WTIOILCash","XTIUSD",
+      "BRENTCash","BRENTCash#","UKOIL","XBRUSD",
+      "COPPER","COPPER#","COPPERm#","COPPERCash","COPPER.c","HGCOPPER",
+      "NGAS","NGAS#","NGASCash","NGASCash#","NATGAS","NATGASCash","NGAS.c",
+      "SOYBEAN","SOYBEAN#","SOYBEANCash","SOYBEANCash#","SOYBEAN.c","SOY",
+      "US30","US30Cash","US30Cash#","US30#","DJ30","USA30","US30.pro","US30.m","WS30",
+      "US100","US100Cash","US100Cash#","US100#","NAS100","USTECH","US100.pro","US100.m",
+      "US500","US500Cash","US500Cash#","US500#","SPX500","US500.pro","US500.m",
+      "GER40","GER40Cash","GER40Cash#","GER40#","DE40","GER30","GER40.pro","GER40.m",
+      "JP225","JP225Cash","JP225Cash#","JP225#","JPN225","JP225.pro","JP225.m",
+      "VOLX","VOLXCash","VOLXCash#","VIX","VOLX#","VIX#","VOLX.c","VIX.c",
+      "USDX","USDXCash","USDXCash#","DXY","USDX#","DXY#","USDX.c"
    };
    string fxName = "";
    double fxContract = 0;
