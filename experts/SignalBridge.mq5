@@ -13,7 +13,7 @@
 #property description "Places Signal Desk orders on the XM account this terminal is logged into."
 
 input string ApiBase          = "https://veespatial-fx.onrender.com";
-input string ApiKey           = "fxk_3tDAahw_gy_Ske_HxXYIMjig7G9likU7ZyT24vEcblY";
+input string ApiKey           = "";
 input int    PollSeconds      = 10;
 input int    Magic            = 56021;
 input int    SlippagePoints   = 30;
@@ -311,7 +311,7 @@ void PlaceLine(const string line)
    int spread = (int)SymbolInfoInteger(chosen, SYMBOL_SPREAD);
    int digits = (int)SymbolInfoInteger(chosen, SYMBOL_DIGITS);
    int maxSpread = MaxSpreadPoints;
-   if(MaxSpreadPoints > 0 && (digits <= 2 || StringFind(chosen, "GOLD") >= 0 || StringFind(chosen, "XAU") >= 0 || StringFind(chosen, "SILVER") >= 0 || StringFind(chosen, "XAG") >= 0 || StringFind(chosen, "OIL") >= 0 || StringFind(chosen, "BRENT") >= 0 || StringFind(chosen, "US30") >= 0 || StringFind(chosen, "US100") >= 0 || StringFind(chosen, "US500") >= 0 || StringFind(chosen, "GER40") >= 0 || StringFind(chosen, "JP225") >= 0 || StringFind(chosen, "VOLX") >= 0 || StringFind(chosen, "VIX") >= 0))
+   if(MaxSpreadPoints > 0 && (digits <= 2 || StringFind(chosen, "GOLD") >= 0 || StringFind(chosen, "XAU") >= 0 || StringFind(chosen, "SILVER") >= 0 || StringFind(chosen, "XAG") >= 0 || StringFind(chosen, "OIL") >= 0 || StringFind(chosen, "BRENT") >= 0 || StringFind(chosen, "COPPER") >= 0 || StringFind(chosen, "NGAS") >= 0 || StringFind(chosen, "NATGAS") >= 0 || StringFind(chosen, "SOY") >= 0 || StringFind(chosen, "US30") >= 0 || StringFind(chosen, "US100") >= 0 || StringFind(chosen, "US500") >= 0 || StringFind(chosen, "GER40") >= 0 || StringFind(chosen, "JP225") >= 0 || StringFind(chosen, "VOLX") >= 0 || StringFind(chosen, "VIX") >= 0))
    {
       maxSpread = MaxSpreadPoints * 15;
    }

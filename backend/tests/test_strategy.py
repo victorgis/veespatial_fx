@@ -169,7 +169,7 @@ def test_five_minute_pullback_publishes_inside_the_hour_trend():
     assert decision.draft.sl < decision.draft.entry < decision.draft.tp
     reward = decision.draft.tp - decision.draft.entry
     risk = decision.draft.entry - decision.draft.sl
-    assert abs(reward / risk - 2.0) < 0.05
+    assert abs(reward / risk - 1.5) < 0.05
     for word in ("RSI", "MACD", "MA50", "EMA200", "15m", "entry: buy"):
         assert word in decision.log_line
 

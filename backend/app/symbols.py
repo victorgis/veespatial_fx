@@ -105,7 +105,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Silver vs US dollar",
         group="metal",
         yahoo=("SI=F", "XAGUSD=X"),
-        aliases=("SILVER", "SILVER#", "XAGUSD", "XAGUSD#", "SILVERmicro", "SILVERm#", "XAGUSDmicro", "XAGUSDm"),
+        aliases=("SILVER", "SILVER#", "SILVERCash", "SILVERCash#", "XAGUSD", "XAGUSD#", "SILVERmicro", "SILVERm#", "XAGUSDmicro", "XAGUSDm"),
         contract_standard=5000,  # troy ounces
         scales_with_account=True,
         pip=0.01,
@@ -159,7 +159,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="High Grade Copper",
         group="commodity",
         yahoo=("HG=F",),
-        aliases=("COPPER", "COPPER#", "COPPERCash", "COPPER.c", "HGCOPPER"),
+        aliases=("COPPER", "COPPER#", "COPPERCash", "COPPERCash#", "COPPER.c", "COPPER.m", "COPPERmicro", "HGCOPPER"),
         contract_standard=1000,  # lbs
         scales_with_account=False,
         pip=0.001,
@@ -175,7 +175,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Natural Gas, cash",
         group="energy",
         yahoo=("NG=F",),
-        aliases=("NGAS", "NGAS#", "NGASCash", "NATGAS", "NATGASCash", "NGAS.c"),
+        aliases=("NGAS", "NGAS#", "NGASCash", "NGASCash#", "NATGAS", "NATGASCash", "NATGASCash#", "NGAS.c", "NGAS.m"),
         contract_standard=1000,  # MMBtu
         scales_with_account=False,
         pip=0.001,
@@ -191,7 +191,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="US Soybeans",
         group="commodity",
         yahoo=("ZS=F",),
-        aliases=("SOYBEAN", "SOYBEAN#", "SOYBEANCash", "SOYBEAN.c", "SOY"),
+        aliases=("SOYBEAN", "SOYBEAN#", "SOYBEANCash", "SOYBEANCash#", "SOYBEAN.c", "SOY"),
         contract_standard=100,  # bushels
         scales_with_account=False,
         pip=0.01,

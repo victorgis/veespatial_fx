@@ -272,7 +272,7 @@ class IntradayParams:
     sell_rsi: tuple[float, float] = (42, 60)
     min_stop_atr: float = 1.5
     max_stop_atr: float = 2.5
-    target_r: float = 2.0
+    target_r: float = 1.5
 
 
 @dataclass(frozen=True)
@@ -453,7 +453,45 @@ def _macd_txt(hist: float | None, prev: float | None, line: float | None, signal
         place = "below signal"
     else:
         place = "on signal"
-    return f"{direction}, {place}"
+def calculate_supply_demand_tp(
+    side: str,
+    entry: float,
+    distance: float,
+    m15: list[Bar] | None,
+    cur_atr: float,
+    pip: float,
+    default_r: float = 1.5,
+) -> float:
+    """Locates opposing supply (swing high) or demand (swing low) zones on the 15m structure.
+
+    If an opposing structural wall exists between 1.2R and 2.0R, caps Take Profit
+    right before that wall (minus a spread/ATR buffer) so the trade exits cleanly.
+    Otherwise defaults to default_r (1.5R).
+    """
+    if not m15 or len(m15) < 4 or distance <= 0:
+        return default_r
+
+    recent = m15[-40:]
+    zone_buffer = max(pip * 2.0, cur_atr * 0.1)
+
+    if side == "buy":
+        highs = [b.high for b in recent if b.high > entry + distance * 1.0]
+        if highs:
+            supply_wall = min(highs) - zone_buffer
+            if supply_wall > entry:
+                r_to_wall = (supply_wall - entry) / distance
+                if 1.2 <= r_to_wall <= 2.0:
+                    return min(r_to_wall, 1.8)
+    else:
+        lows = [b.low for b in recent if b.low < entry - distance * 1.0]
+        if lows:
+            demand_wall = max(lows) + zone_buffer
+            if demand_wall < entry:
+                r_to_wall = (entry - demand_wall) / distance
+                if 1.2 <= r_to_wall <= 2.0:
+                    return min(r_to_wall, 1.8)
+
+    return default_r
 
 
 def _levels_r(side: str, entry: float, distance: float, digits: int, target_r: float) -> tuple[float, float] | None:
@@ -752,9 +790,10 @@ def evaluate_intraday(
         if raw > cur_atr * tuned.max_stop_atr:
             return finish("no entry: the stop would be wider than 2 times the 5-minute range")
         return finish("no entry: the swing does not give a stop")
-    built = _levels_r(side, entry, distance, spec.digits, tuned.target_r)
+    target_r = calculate_supply_demand_tp(side, entry, distance, m15, cur_atr, spec.pip, tuned.target_r)
+    built = _levels_r(side, entry, distance, spec.digits, target_r)
     if built is None:
         return finish("no entry: the stop rounded onto the entry")
     sl, tp = built
     draft = SignalDraft(side, entry, sl, tp, cur_atr, cur_rsi, bar.time)
-    return finish(f"entry: {side}, stop beyond the swing, target {tuned.target_r:g} times the stop", draft)
+    return finish(f"entry: {side}, stop beyond the swing, target {target_r:g} times the stop", draft)

@@ -8,6 +8,7 @@ from app.market import (
     clear_cache,
     drop_forming,
     get_market,
+    is_no_trade_window,
     m5_is_fresh,
     resample,
     series_is_fresh,
@@ -29,6 +30,17 @@ def test_session_and_five_minute_freshness():
     stale = [Bar(datetime(2026, 9, 28, 11, 40, tzinfo=timezone.utc), 1, 2, 1, 1)]
     assert m5_is_fresh(fresh, now) is True
     assert m5_is_fresh(stale, now) is False
+
+
+def test_is_no_trade_window():
+    # 20:00 UTC = 21:00 (9pm) WAT -> True
+    assert is_no_trade_window(datetime(2026, 10, 6, 20, 30, tzinfo=timezone.utc)) is True
+    # 00:30 UTC = 01:30 (1:30am) WAT -> True
+    assert is_no_trade_window(datetime(2026, 10, 6, 0, 30, tzinfo=timezone.utc)) is True
+    # 01:00 UTC = 02:00 (2am) WAT -> False (trades allowed again)
+    assert is_no_trade_window(datetime(2026, 10, 6, 1, 0, tzinfo=timezone.utc)) is False
+    # 12:00 UTC = 13:00 (1pm) WAT -> False
+    assert is_no_trade_window(datetime(2026, 10, 6, 12, 0, tzinfo=timezone.utc)) is False
 
 
 def test_resample_and_drop_the_candle_that_is_still_open():

@@ -122,6 +122,13 @@ def session_open(now: datetime | None = None) -> bool:
     return True
 
 
+def is_no_trade_window(now: datetime | None = None) -> bool:
+    """Blocks new trades between 9:00 PM WAT (20:00 UTC) and 2:00 AM WAT (01:00 UTC)."""
+    now = _as_utc(now or datetime.now(timezone.utc))
+    hour = now.hour
+    return hour >= 20 or hour < 1
+
+
 def m5_is_fresh(bars: list[Bar], now: datetime | None = None) -> bool:
     """The last closed 5-minute candle has to be from the last quarter hour."""
     if not bars:
@@ -212,6 +219,8 @@ class YahooMarket(MarketData):
 
             if not session_open(now_dt):
                 skip = f"{spec.display}: market is closed, no new 5-minute trade"
+            elif is_no_trade_window(now_dt):
+                skip = f"{spec.display}: no-trade window active (9:00 PM - 2:00 AM WAT)"
             elif not m5:
                 skip = f"{spec.display}: no closed 5-minute candle, so no new trade"
             elif not m5_is_fresh(m5, now_dt):
