@@ -114,11 +114,20 @@ def quote_out(q: Quote) -> QuoteOut:
     )
 
 
-def signal_out(db: Session, settings: Settings, signal: Signal, delivery: Delivery | None) -> SignalOut | None:
+def signal_out(
+    db: Session,
+    settings: Settings,
+    signal: Signal,
+    delivery: Delivery | None,
+    rates: dict[str, float] | None = None,
+    broker_specs: list[BrokerSpec] | None = None,
+) -> SignalOut | None:
     spec = get_symbol(signal.symbol_id)
     if spec is None:
         return None
-    quote = build_quote(db, settings, spec, signal.side, signal.entry, signal.sl, signal.tp)
+    quote = build_quote(
+        db, settings, spec, signal.side, signal.entry, signal.sl, signal.tp, rates=rates, broker_specs=broker_specs
+    )
     return SignalOut(
         id=signal.id,
         symbol_id=spec.id,

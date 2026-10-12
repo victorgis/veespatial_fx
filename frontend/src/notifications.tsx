@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
-import { desk } from "./api";
+import { desk, getToken } from "./api";
 
 export type Toast = {
   id: string;
@@ -41,8 +41,19 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
 
   async function requestPermission() {
     if (typeof window !== "undefined" && "Notification" in window) {
-      const res = await Notification.requestPermission();
-      setPermission(res);
+      try {
+        const res = await Notification.requestPermission();
+        setPermission(res);
+        if (res === "granted") {
+          addToast({
+            type: "info",
+            title: "🔔 Desktop Notifications Enabled",
+            message: "You will receive desktop alerts when trades open, lock at breakeven, and hit take profit.",
+          });
+        }
+      } catch (err) {
+        console.error("Failed to request notification permission", err);
+      }
     }
   }
 
@@ -78,6 +89,10 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     let mounted = true;
 
     async function checkUpdates() {
+      // Must check if user is logged in before polling
+      const token = getToken();
+      if (!token) return;
+
       try {
         const signals = await desk.signals();
         if (!mounted || !signals) return;

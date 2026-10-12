@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { useAuth } from "./auth";
+import { useNotifications } from "./notifications";
 
 const LINKS = [
   ["/", "Home"],
@@ -11,6 +12,7 @@ const LINKS = [
 
 export function Shell() {
   const { me } = useAuth();
+  const { permission, requestPermission } = useNotifications();
   if (!me?.settings.onboarding_done) {
     return (
       <div>
@@ -35,6 +37,20 @@ export function Shell() {
           ))}
         </nav>
         <div className="rail-foot">
+          {permission !== "granted" ? (
+            <button
+              className="btn ghost"
+              type="button"
+              style={{ fontSize: 13, padding: "6px 12px", minHeight: 34, borderColor: "var(--brass)", color: "var(--brass)" }}
+              onClick={requestPermission}
+            >
+              🔔 Enable Alerts
+            </button>
+          ) : (
+            <span className="muted" style={{ fontSize: 13 }}>
+              🔔 Alerts Active
+            </span>
+          )}
           <span>
             <i className={`status-dot ${me.connection.online ? "on" : ""}`} /> {mode}
           </span>
@@ -44,9 +60,21 @@ export function Shell() {
       <div className="main">
         <header className="topbar">
           <strong>Signal Desk</strong>
-          <span className="muted">
-            <i className={`status-dot ${me.connection.online ? "on" : ""}`} /> {mode}
-          </span>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            {permission !== "granted" ? (
+              <button
+                className="btn ghost"
+                type="button"
+                style={{ fontSize: 12, padding: "4px 10px", minHeight: 30, borderColor: "var(--brass)", color: "var(--brass)" }}
+                onClick={requestPermission}
+              >
+                🔔 Alerts
+              </button>
+            ) : null}
+            <span className="muted">
+              <i className={`status-dot ${me.connection.online ? "on" : ""}`} /> {mode}
+            </span>
+          </div>
         </header>
         <div className="content">
           <Outlet />

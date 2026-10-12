@@ -78,7 +78,17 @@ def _spec_conflicts(row: BrokerSpec, spec: Symbol, account_type: str) -> bool:
     return ratio > 3 or ratio < (1 / 3)
 
 
-def build_quote(db: Session, settings: Settings, spec: Symbol, side: str, entry: float, sl: float, tp: float) -> Quote:
+def build_quote(
+    db: Session,
+    settings: Settings,
+    spec: Symbol,
+    side: str,
+    entry: float,
+    sl: float,
+    tp: float,
+    rates: dict[str, float] | None = None,
+    broker_specs: list[BrokerSpec] | None = None,
+) -> Quote:
     currency = settings.account_currency or "USD"
     if settings.balance is not None and settings.balance > 0:
         balance = float(settings.balance)
@@ -87,14 +97,15 @@ def build_quote(db: Session, settings: Settings, spec: Symbol, side: str, entry:
         balance = float(settings.planning_balance or 0)
         source = "planning"
     risk_cash = balance * float(settings.risk_percent) / 100.0
-    rates = converters(db)
+    if rates is None:
+        rates = converters(db)
     # Comparison figures are the uncapped risk size, so standard vs micro stays honest.
     standard = lots_from_contract(spec, "standard", risk_cash, entry, sl, settings.platform, 1_000_000, currency, rates)
     micro = lots_from_contract(spec, "micro", risk_cash, entry, sl, settings.platform, 1_000_000, currency, rates)
     own = lots_from_contract(
         spec, settings.account_type, risk_cash, entry, sl, settings.platform, settings.max_lot, currency, rates
     )
-    rows = db.query(BrokerSpec).filter(BrokerSpec.user_id == settings.user_id).all()
+    rows = broker_specs if broker_specs is not None else db.query(BrokerSpec).filter(BrokerSpec.user_id == settings.user_id).all()
     live = _pick_spec(rows, spec, settings)
     mismatch, mismatch_text = account_mismatch(settings)
     conflict = bool(live and _spec_conflicts(live, spec, settings.account_type) and not settings.trust_platform_size)

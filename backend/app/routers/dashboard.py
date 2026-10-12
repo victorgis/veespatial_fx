@@ -29,21 +29,36 @@ def me(user: User = Depends(current_user), db: Session = Depends(get_db)) -> MeO
 @router.get("/dashboard", response_model=DashboardOut)
 def dashboard(user: User = Depends(current_user), db: Session = Depends(get_db)) -> DashboardOut:
     row = _load(db, user)
-    pairs = (
+    from app.models import BrokerSpec
+    from app.quotes import converters
+
+    rates = converters(db)
+    specs = db.query(BrokerSpec).filter(BrokerSpec.user_id == user.id).all()
+
+    active_pairs = (
         db.query(Signal, Delivery)
         .join(Delivery, Delivery.signal_id == Signal.id)
-        .filter(Delivery.user_id == user.id)
+        .filter(Delivery.user_id == user.id, Signal.status == "active", Delivery.status.in_(_OPEN))
         .order_by(Signal.created_at.desc())
+        .limit(20)
+        .all()
+    )
+    recent_pairs = (
+        db.query(Signal, Delivery)
+        .join(Delivery, Delivery.signal_id == Signal.id)
+        .filter(Delivery.user_id == user.id, Signal.status != "active")
+        .order_by(Signal.created_at.desc())
+        .limit(8)
         .all()
     )
     signals = []
-    recent = []
-    for signal, delivery in pairs:
-        view = signal_out(db, row, signal, delivery)
-        if view is None:
-            continue
-        if signal.status == "active" and delivery.status in _OPEN:
+    for signal, delivery in active_pairs:
+        view = signal_out(db, row, signal, delivery, rates=rates, broker_specs=specs)
+        if view is not None:
             signals.append(view)
-        elif len(recent) < 8:
+    recent = []
+    for signal, delivery in recent_pairs:
+        view = signal_out(db, row, signal, delivery, rates=rates, broker_specs=specs)
+        if view is not None:
             recent.append(view)
     return DashboardOut(me=me_out(db, user, row), scan=scan_out(db), signals=signals, recent=recent)

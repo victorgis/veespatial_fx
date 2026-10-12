@@ -21,7 +21,6 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { ...init, headers });
   if (response.status === 401 && !path.startsWith("/api/auth/")) {
     setToken(null);
-    if (!location.pathname.startsWith("/login")) location.assign("/login");
     throw new ApiError("Sign in again.");
   }
   if (!response.ok) {
