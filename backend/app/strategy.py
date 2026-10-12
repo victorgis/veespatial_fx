@@ -453,6 +453,9 @@ def _macd_txt(hist: float | None, prev: float | None, line: float | None, signal
         place = "below signal"
     else:
         place = "on signal"
+    return f"{direction}, {place}"
+
+
 def calculate_supply_demand_tp(
     side: str,
     entry: float,

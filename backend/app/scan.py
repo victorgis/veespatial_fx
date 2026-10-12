@@ -16,7 +16,7 @@ from app.strategy import SignalDraft, StrategyParams, bar_hit
 from app.strategy import evaluate_intraday as evaluate
 from app.symbols import get_symbol
 from app.telegram_svc import send as telegram_send
-from app.wording import close_message, rationale, telegram_message
+from app.wording import rationale, telegram_message
 from app.sizing import lots_from_contract
 
 log = logging.getLogger("desk.scan")
@@ -259,9 +259,8 @@ def _run() -> dict:
                 signal.status = outcome
                 signal.close_price = price
                 signal.closed_at = now
-                if not signal.close_telegram_sent:
-                    if telegram_send(close_message(spec, signal.side, outcome, price)):
-                        signal.close_telegram_sent = True
+                # Telegram carries the call only. Stops, targets, and expiries stay on the desk.
+                signal.close_telegram_sent = True
         db.flush()
 
         for symbol_id, result in fetched.items():

@@ -83,7 +83,12 @@ def telegram_message(
         if standard.lots is None and standard.reason:
             lines.append(standard.reason)
     else:
-        lines.append(f"{_fmt_lots(standard.lots)} lots. On XM this is 100 barrels per lot on a standard or a micro account.")
+        if spec.group == "index":
+            lines.append(f"{_fmt_lots(standard.lots)} lots.")
+        else:
+            lines.append(
+                f"{_fmt_lots(standard.lots)} lots. On XM, 1 lot is {spec.contract_standard:g} {spec.unit}."
+            )
         if standard.lots is None and standard.reason:
             lines.append(standard.reason)
     if spec.mt5_only:

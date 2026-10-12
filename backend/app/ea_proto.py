@@ -156,8 +156,10 @@ def parse_execution(body: str) -> ExecutionIn:
             continue
         key, value = line.split("=", 1)
         fields[key.strip().lower()] = value.strip()
+    raw_id = fields.get("delivery_id") or ""
+    digits = "".join(ch for ch in raw_id if ch.isdigit())
     try:
-        delivery_id = int(fields.get("delivery_id") or "0")
+        delivery_id = int(digits) if digits else 0
     except ValueError:
         delivery_id = 0
     fill: float | None
@@ -171,7 +173,7 @@ def parse_execution(body: str) -> ExecutionIn:
     except ValueError:
         lots = None
     status = fields.get("status") or "not_placed"
-    if status not in ("placed", "not_placed"):
+    if status not in ("placed", "not_placed", "sl_to_entry", "sl_lock", "tp_hit"):
         status = "not_placed"
     return ExecutionIn(
         delivery_id=delivery_id,

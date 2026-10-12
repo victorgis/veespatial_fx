@@ -123,7 +123,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="West Texas crude, cash",
         group="energy",
         yahoo=("CL=F",),
-        aliases=("OILCash", "OILCash#", "USOIL", "WTI", "XTIUSD"),
+        aliases=("OILCash", "OILCash#", "OILCash.m", "USOIL", "WTI", "XTIUSD"),
         contract_standard=100,  # barrels
         scales_with_account=False,
         pip=0.01,
@@ -141,7 +141,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Brent crude, cash",
         group="energy",
         yahoo=("BZ=F",),
-        aliases=("BRENTCash", "BRENTCash#", "UKOIL", "XBRUSD"),
+        aliases=("BRENTCash", "BRENTCash#", "BRENTCash.m", "UKOIL", "XBRUSD"),
         contract_standard=100,
         scales_with_account=False,
         pip=0.01,
@@ -159,15 +159,15 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="High Grade Copper",
         group="commodity",
         yahoo=("HG=F",),
-        aliases=("COPPER", "COPPER#", "COPPERCash", "COPPERCash#", "COPPER.c", "COPPER.m", "COPPERmicro", "HGCOPPER"),
-        contract_standard=1000,  # lbs
+        aliases=("HGCOP", "HGCOP#", "COPPER", "COPPER#", "COPPERCash", "COPPERCash#", "HGCOPPER", "COPPER.c"),
+        contract_standard=2000,  # lbs. XM's HGCOP contract is 2,000 lbs.
         scales_with_account=False,
         pip=0.001,
         digits=4,
         unit="lbs",
         quote_mode="usd",
         mt5_only=True,
-        note="High Grade Copper CFD contract.",
+        note="XM lists high grade copper as HGCOP, 2,000 lbs per lot. A month code such as HGCOP-DEC26 is the same market.",
     ),
     Symbol(
         id="ngas",
@@ -175,7 +175,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Natural Gas, cash",
         group="energy",
         yahoo=("NG=F",),
-        aliases=("NGAS", "NGAS#", "NGASCash", "NGASCash#", "NATGAS", "NATGASCash", "NATGASCash#", "NGAS.c", "NGAS.m"),
+        aliases=("NGASCash", "NGASCash#", "NATGASCash", "NATGASCash#", "NGAS", "NGAS#", "NATGAS", "NGAS.c", "NGAS.m"),
         contract_standard=1000,  # MMBtu
         scales_with_account=False,
         pip=0.001,
@@ -183,7 +183,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         unit="MMBtu",
         quote_mode="usd",
         mt5_only=True,
-        note="Natural Gas cash contract.",
+        note="XM lists natural gas cash as NGASCash, 1,000 MMBtu per lot, on MT5.",
     ),
     Symbol(
         id="soybean",
@@ -191,15 +191,15 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="US Soybeans",
         group="commodity",
         yahoo=("ZS=F",),
-        aliases=("SOYBEAN", "SOYBEAN#", "SOYBEANCash", "SOYBEANCash#", "SOYBEAN.c", "SOY"),
-        contract_standard=100,  # bushels
+        aliases=("SBEAN", "SBEAN#", "SOYBEAN", "SOYBEAN#", "SOYBEANCash", "SOYBEANCash#", "SOYBEAN.c", "SOY"),
+        contract_standard=400,  # bushels. XM's SBEAN contract is 400 bushels.
         scales_with_account=False,
         pip=0.01,
         digits=2,
         unit="bushels",
         quote_mode="usd",
         mt5_only=True,
-        note="US Soybeans cash contract.",
+        note="XM lists US soybeans as SBEAN, 400 bushels per lot. Yahoo quotes cents per bushel; the copier rescales the stop onto the MT5 price.",
     ),
     Symbol(
         id="us30",
@@ -349,6 +349,32 @@ def parse_alias_overrides(text: str) -> dict[str, list[str]]:
         if name not in out[key]:
             out[key].append(name)
     return out
+
+
+_PREFIX_BREAK = set("#.-_")
+
+
+def broker_symbol_matches(broker_symbol: str, aliases: tuple[str, ...] | set[str]) -> bool:
+    """True when the platform name is an alias, or a month code built on one.
+
+    XM lists copper as HGCOP and sometimes HGCOP-DEC26. The month suffix is
+    still the same market. Short aliases are exact only, so SOY does not
+    swallow an unrelated name.
+    """
+    name = (broker_symbol or "").upper()
+    if not name:
+        return False
+    for alias in aliases:
+        token = alias.upper()
+        if not token:
+            continue
+        if name == token:
+            return True
+        if len(token) < 4 or not name.startswith(token):
+            continue
+        if name[len(token)] in _PREFIX_BREAK:
+            return True
+    return False
 
 
 def aliases_for(spec: Symbol, overrides_text: str) -> tuple[str, ...]:

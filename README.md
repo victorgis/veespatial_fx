@@ -33,7 +33,7 @@ One signal per market at a time. After it closes, the next one on that market wa
 
 Every signal is posted to Telegram as soon as it appears. Automatic accounts do not take all of them. Three open automatic trades is the usual limit, and five is the most. Anything past that stays on Telegram and on the desk for a manual entry. The service log prints one line per market on every scan, with the 1-hour trend, RSI, MA50, EMA200, MACD, and the 15-minute structure, whether or not a trade is taken.
 
-Prices come from Yahoo Finance real-time market data. WTI and Brent are cash CFDs matching XM’s OILCash and BRENTCash quotes. The copier skips an order if the broker price has already moved more than a quarter of the way to the stop.
+Prices come from Yahoo Finance. A forex order is skipped if the broker price has already run more than 40% of the way to the stop. Gold, silver, WTI, Brent, natural gas, copper, and soybeans are filled at the MT5 price. The stop and target keep the signal's distance, and that distance is rescaled when the broker quotes a different unit, such as soybeans in dollars instead of cents.
 
 This is a rules alert. It is not a promise of profit, and it is not a measured win rate. A stop can be skipped in a fast market.
 

@@ -1,7 +1,10 @@
 import pytest
 
-from app.sizing import chase_limit, lots_from_contract, lots_from_ticks
-from app.symbols import get_symbol, parse_alias_overrides
+from app.ea_proto import parse_execution
+from app.models import BrokerSpec, Settings
+from app.quotes import _pick_spec
+from app.sizing import chase_for, chase_limit, lots_from_contract, lots_from_ticks, rebase_levels
+from app.symbols import aliases_for, broker_symbol_matches, get_symbol, parse_alias_overrides
 from app.wording import status_line
 
 
@@ -64,6 +67,68 @@ def test_live_ticks_match_the_contract_math():
 
 def test_chase_limit_is_a_quarter_of_the_stop():
     assert chase_limit(1.10, 1.09, 0.0001) == pytest.approx(0.0040)
+
+
+def test_commodities_are_not_refused_for_a_different_broker_price():
+    oil = get_symbol("oil")
+    gold = get_symbol("gold")
+    eurusd = get_symbol("eurusd")
+    assert oil is not None and gold is not None and eurusd is not None
+    assert chase_for(oil, 80, 79.5) == 0
+    assert chase_for(gold, 2650, 2642) == 0
+    assert chase_for(eurusd, 1.10, 1.09) == pytest.approx(0.004)
+
+
+def test_rebase_keeps_the_stop_distance_when_the_cash_price_differs():
+    entry, sl, tp = rebase_levels("buy", 80.0, 79.5, 80.5, 77.20, 77.25)
+    assert entry == pytest.approx(77.25)
+    assert entry - sl == pytest.approx(0.50)
+    assert tp - entry == pytest.approx(0.50)
+
+
+def test_rebase_scales_soybeans_from_cents_onto_dollars():
+    entry, sl, tp = rebase_levels("sell", 1050.0, 1058.0, 1042.0, 10.52, 10.55)
+    assert entry == pytest.approx(10.52)
+    assert sl - entry == pytest.approx(0.08)
+    assert entry - tp == pytest.approx(0.08)
+
+
+def test_xm_commodity_names_match_month_codes():
+    copper = get_symbol("copper")
+    ngas = get_symbol("ngas")
+    soybean = get_symbol("soybean")
+    assert copper is not None and ngas is not None and soybean is not None
+    assert aliases_for(ngas, "")[0] == "NGASCash"
+    assert broker_symbol_matches("HGCOP-DEC26", aliases_for(copper, ""))
+    assert broker_symbol_matches("SBEAN", aliases_for(soybean, ""))
+    assert not broker_symbol_matches("NGAS-JAN26", ("NGASCash",))
+    assert not broker_symbol_matches("EURUSD", aliases_for(copper, ""))
+
+
+def test_cash_symbol_beats_the_futures_month():
+    spec = get_symbol("ngas")
+    assert spec is not None
+    settings = Settings(user_id=1, account_type="standard", alias_overrides="")
+    rows = [
+        BrokerSpec(
+            user_id=1, broker_symbol="NGAS-JAN26", contract_size=1000, tick_size=0.001,
+            tick_value=1, min_lot=1, max_lot=10, lot_step=0.01, digits=3, bid=3.1, ask=3.12,
+        ),
+        BrokerSpec(
+            user_id=1, broker_symbol="NGASCash", contract_size=1000, tick_size=0.001,
+            tick_value=1, min_lot=0.01, max_lot=10, lot_step=0.01, digits=3, bid=2.8, ask=2.82,
+        ),
+    ]
+    picked = _pick_spec(rows, spec, settings)
+    assert picked is not None
+    assert picked.broker_symbol == "NGASCash"
+
+
+def test_stop_move_reports_keep_their_status():
+    report = parse_execution("delivery_id=fx15\nstatus=sl_lock\nfill_price=77.4\n")
+    assert report.delivery_id == 15
+    assert report.status == "sl_lock"
+    assert report.fill_price == pytest.approx(77.4)
 
 
 def test_alias_override_rejects_unknown_markets():

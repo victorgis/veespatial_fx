@@ -9,7 +9,7 @@
 // Orders are sent only when the website account is set to automatic.
 
 #property copyright "Signal Desk"
-#property version   "1.10"
+#property version   "1.11"
 #property description "Places Signal Desk orders on the XM account this terminal is logged into."
 
 input string ApiBase          = "https://veespatial-fx.onrender.com";
@@ -19,7 +19,10 @@ input int    Magic            = 56021;
 input int    SlippagePoints   = 30;
 input int    MaxSpreadPoints  = 40;
 input double MaxLots          = 0; // 0 = no extra ceiling. The website max lot still applies.
-input double BreakEvenProfitUSD = 2.0; // Profit in USD from MT5 to move Stop Loss to Entry (0 = off)
+input double BreakEvenProfitUSD = 4.0; // Floating profit that moves the stop to the entry price. 0 = off.
+input double LockProfitTriggerUSD = 5.0; // Floating profit that locks a winner. 0 = off.
+input double LockProfitUSD = 1.0; // Profit the stop locks in once the trigger is reached.
+input double SpreadWidenRatio = 0.15; // When the spread is this fraction of the stop, push the stop out by the spread.
 
 string LastNote = "Starting.";
 
@@ -111,6 +114,185 @@ bool UseSymbol(const string name)
    return (SymbolInfoDouble(name, SYMBOL_ASK) > 0 || SymbolInfoDouble(name, SYMBOL_BID) > 0);
 }
 
+bool PrefixMatch(const string symbol, const string alias)
+{
+   if(StringLen(alias) < 4) return false;
+   if(StringFind(symbol, alias) != 0) return false;
+   if(StringLen(symbol) == StringLen(alias)) return true;
+   ushort ch = StringGetCharacter(symbol, StringLen(alias));
+   return (ch == '#' || ch == '.' || ch == '-' || ch == '_');
+}
+
+bool IsAnchoredMarket(const string name)
+{
+   string n = name;
+   StringToUpper(n);
+   return (StringFind(n, "GOLD") >= 0 || StringFind(n, "XAU") >= 0
+      || StringFind(n, "SILVER") >= 0 || StringFind(n, "XAG") >= 0
+      || StringFind(n, "OIL") >= 0 || StringFind(n, "BRENT") >= 0 || StringFind(n, "WTI") >= 0 || StringFind(n, "XTI") >= 0
+      || StringFind(n, "NGAS") >= 0 || StringFind(n, "NATGAS") >= 0
+      || StringFind(n, "COPPER") >= 0 || StringFind(n, "HGCOP") >= 0
+      || StringFind(n, "SOY") >= 0 || StringFind(n, "SBEAN") >= 0);
+}
+
+int ExpiryKey(const string sym)
+{
+   string months[12] = {"JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"};
+   int n = StringLen(sym);
+   for(int m = 0; m < 12; m++)
+   {
+      int pos = StringFind(sym, months[m]);
+      if(pos < 0 || pos + 5 > n) continue;
+      int year = (int)StringToInteger(StringSubstr(sym, pos + 3, 2));
+      if(year <= 0) continue;
+      return (2000 + year) * 100 + (m + 1);
+   }
+   return 999999;
+}
+
+string FindRootSymbol(const string root)
+{
+   string best = "";
+   int bestKey = 999999;
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   int nowKey = dt.year * 100 + dt.mon;
+   for(int pass = 0; pass < 2; pass++)
+   {
+      bool selectedOnly = (pass == 0);
+      int total = SymbolsTotal(selectedOnly);
+      for(int i = 0; i < total; i++)
+      {
+         string sym = SymbolName(i, selectedOnly);
+         if(sym != root && !PrefixMatch(sym, root)) continue;
+         if(StringFind(sym, "Cash") >= 0)
+         {
+            if(UseSymbol(sym)) return sym;
+            continue;
+         }
+         int key = ExpiryKey(sym);
+         if(key < nowKey) continue;
+         if(key < bestKey)
+         {
+            bestKey = key;
+            best = sym;
+         }
+      }
+      if(best != "" && UseSymbol(best)) return best;
+      best = "";
+      bestKey = 999999;
+   }
+   return "";
+}
+
+string ResolveSymbol(const string names, const double entry)
+{
+   string options[];
+   int count = StringSplit(names, ',', options);
+   string exact = "";
+   string exactCash = "";
+   for(int i = 0; i < count; i++)
+   {
+      string candidate = options[i];
+      StringTrimLeft(candidate);
+      StringTrimRight(candidate);
+      if(candidate == "" || !UseSymbol(candidate)) continue;
+      if(exact == "") exact = candidate;
+      if(exactCash == "" && StringFind(candidate, "Cash") >= 0) exactCash = candidate;
+   }
+   if(exactCash != "") return exactCash;
+   if(exact != "") return exact;
+
+   string best = "";
+   double bestScore = 1e100;
+   MqlDateTime dt;
+   TimeToStruct(TimeCurrent(), dt);
+   int nowKey = dt.year * 100 + dt.mon;
+   for(int pass = 0; pass < 2 && best == ""; pass++)
+   {
+      bool selectedOnly = (pass == 0);
+      int total = SymbolsTotal(selectedOnly);
+      for(int i = 0; i < total; i++)
+      {
+         string sym = SymbolName(i, selectedOnly);
+         bool hit = false;
+         for(int a = 0; a < count; a++)
+         {
+            string alias = options[a];
+            StringTrimLeft(alias);
+            StringTrimRight(alias);
+            if(alias != "" && (sym == alias || PrefixMatch(sym, alias))) { hit = true; break; }
+         }
+         if(!hit) continue;
+         if(StringFind(sym, "Cash") >= 0 && UseSymbol(sym)) return sym;
+         int key = ExpiryKey(sym);
+         if(key < nowKey) continue;
+         double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+         double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+         double mid = (bid > 0 && ask > 0) ? (bid + ask) / 2.0 : (bid > 0 ? bid : ask);
+         double score = (double)key;
+         if(mid > 0 && entry > 0)
+         {
+            double ratio = mid / entry;
+            if(ratio < 1.0) ratio = 1.0 / ratio;
+            while(ratio > 5.0) ratio /= 10.0;
+            while(ratio < 0.2) ratio *= 10.0;
+            score = MathAbs(MathLog10(ratio));
+         }
+         if(score < bestScore)
+         {
+            bestScore = score;
+            best = sym;
+         }
+      }
+   }
+   if(best != "" && UseSymbol(best)) return best;
+   return "";
+}
+
+double QuoteScale(const double signalPrice, const double brokerPrice)
+{
+   if(signalPrice <= 0 || brokerPrice <= 0) return 1.0;
+   double ratio = brokerPrice / signalPrice;
+   if(ratio <= 0) return 1.0;
+   double logR = MathLog10(ratio);
+   double power = MathRound(logR);
+   if(MathAbs(power) >= 1.0 && MathAbs(logR - power) <= MathLog10(1.8))
+      return MathPow(10.0, power);
+   return 1.0;
+}
+
+string DigitsOnly(const string text)
+{
+   string out = "";
+   int n = StringLen(text);
+   for(int i = 0; i < n; i++)
+   {
+      ushort ch = StringGetCharacter(text, i);
+      if(ch >= '0' && ch <= '9') out += ShortToString(ch);
+   }
+   return out;
+}
+
+string SpecLine(const string name)
+{
+   double contract = SymbolInfoDouble(name, SYMBOL_TRADE_CONTRACT_SIZE);
+   double tickSize = SymbolInfoDouble(name, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(name, SYMBOL_TRADE_TICK_VALUE);
+   if(contract <= 0 || tickSize <= 0) return "";
+   return "spec=" + name
+      + "|" + DoubleToString(contract, 2)
+      + "|" + DoubleToString(tickSize, 8)
+      + "|" + DoubleToString(tickValue, 6)
+      + "|" + DoubleToString(SymbolInfoDouble(name, SYMBOL_VOLUME_MIN), 2)
+      + "|" + DoubleToString(SymbolInfoDouble(name, SYMBOL_VOLUME_MAX), 2)
+      + "|" + DoubleToString(SymbolInfoDouble(name, SYMBOL_VOLUME_STEP), 2)
+      + "|" + IntegerToString((int)SymbolInfoInteger(name, SYMBOL_DIGITS))
+      + "|" + DoubleToString(SymbolInfoDouble(name, SYMBOL_BID), (int)SymbolInfoInteger(name, SYMBOL_DIGITS))
+      + "|" + DoubleToString(SymbolInfoDouble(name, SYMBOL_ASK), (int)SymbolInfoInteger(name, SYMBOL_DIGITS))
+      + "\n";
+}
+
 string Heartbeat()
 {
    string names[] = {
@@ -126,11 +308,11 @@ string Heartbeat()
       "GBPJPY","GBPJPYm","GBPJPYmicro","GBPJPY#","GBPJPYm#",
       "GOLD","GOLD#","XAUUSD","XAUUSD#","GOLDmicro","GOLDm#",
       "SILVER","SILVER#","XAGUSD","XAGUSD#","SILVERmicro","SILVERm#","SILVERm",
-      "OILCash","OILCash#","USOIL","WTI","WTIOILCash","XTIUSD",
-      "BRENTCash","BRENTCash#","UKOIL","XBRUSD",
-      "COPPER","COPPER#","COPPERm#","COPPERCash","COPPER.c","HGCOPPER",
-      "NGAS","NGAS#","NGASCash","NGASCash#","NATGAS","NATGASCash","NGAS.c",
-      "SOYBEAN","SOYBEAN#","SOYBEANCash","SOYBEANCash#","SOYBEAN.c","SOY",
+      "OILCash","OILCash#","OILCash.m","USOIL","WTI","WTIOILCash","XTIUSD",
+      "BRENTCash","BRENTCash#","BRENTCash.m","UKOIL","XBRUSD",
+      "HGCOP","HGCOP#","COPPER","COPPER#","COPPERCash","COPPERCash#","HGCOPPER",
+      "NGASCash","NGASCash#","NATGASCash","NGAS","NGAS#","NATGAS","NGAS.c",
+      "SBEAN","SBEAN#","SOYBEAN","SOYBEAN#","SOYBEANCash","SOYBEANCash#","SOY",
       "US30","US30Cash","US30Cash#","US30#","DJ30","USA30","US30.pro","US30.m","WS30",
       "US100","US100Cash","US100Cash#","US100#","NAS100","USTECH","US100.pro","US100.m",
       "US500","US500Cash","US500Cash#","US500#","SPX500","US500.pro","US500.m",
@@ -146,10 +328,9 @@ string Heartbeat()
    {
       string name = names[i];
       if(!UseSymbol(name)) continue;
+      string line = SpecLine(name);
+      if(line == "") continue;
       double contract = SymbolInfoDouble(name, SYMBOL_TRADE_CONTRACT_SIZE);
-      double tickSize = SymbolInfoDouble(name, SYMBOL_TRADE_TICK_SIZE);
-      double tickValue = SymbolInfoDouble(name, SYMBOL_TRADE_TICK_VALUE);
-      if(contract <= 0 || tickSize <= 0) continue;
       if(fxContract <= 0 && (StringFind(name, "USD") >= 0 || StringFind(name, "EUR") >= 0 || StringFind(name, "GBP") >= 0))
       {
          // Prefer a plain FX name over gold or oil for the account-type check.
@@ -159,17 +340,18 @@ string Heartbeat()
             fxContract = contract;
          }
       }
-      specs += "spec=" + name
-         + "|" + DoubleToString(contract, 2)
-         + "|" + DoubleToString(tickSize, 8)
-         + "|" + DoubleToString(tickValue, 6)
-         + "|" + DoubleToString(SymbolInfoDouble(name, SYMBOL_VOLUME_MIN), 2)
-         + "|" + DoubleToString(SymbolInfoDouble(name, SYMBOL_VOLUME_MAX), 2)
-         + "|" + DoubleToString(SymbolInfoDouble(name, SYMBOL_VOLUME_STEP), 2)
-         + "|" + IntegerToString((int)SymbolInfoInteger(name, SYMBOL_DIGITS))
-         + "|" + DoubleToString(SymbolInfoDouble(name, SYMBOL_BID), (int)SymbolInfoInteger(name, SYMBOL_DIGITS))
-         + "|" + DoubleToString(SymbolInfoDouble(name, SYMBOL_ASK), (int)SymbolInfoInteger(name, SYMBOL_DIGITS))
-         + "\n";
+      specs += line;
+   }
+   string roots[] = {"OILCash","BRENTCash","NGASCash","HGCOP","SBEAN","COPPER","SOYBEAN","GOLD","SILVER"};
+   for(int r = 0; r < ArraySize(roots); r++)
+   {
+      if(StringFind(specs, "spec=" + roots[r] + "|") >= 0) continue;
+      if(StringFind(specs, "spec=" + roots[r] + "#") >= 0) continue;
+      if(StringFind(specs, "spec=" + roots[r] + "-") >= 0) continue;
+      if(StringFind(specs, "spec=" + roots[r] + ".") >= 0) continue;
+      string found = FindRootSymbol(roots[r]);
+      if(found == "" || StringFind(specs, "spec=" + found + "|") >= 0) continue;
+      specs += SpecLine(found);
    }
    return "platform=mt5\n"
       + "login=" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + "\n"
@@ -259,9 +441,30 @@ double FitLots(const string symbol, double lots)
    return lots;
 }
 
+double MoneyToPrice(const string sym, const double volume, const double money)
+{
+   double tickSize = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);
+   if(tickSize <= 0 || tickValue <= 0 || volume <= 0 || money <= 0) return 0;
+   return money * tickSize / (tickValue * volume);
+}
+
+double RoomForStop(const string sym, const long type, const double market)
+{
+   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+   int stops = (int)SymbolInfoInteger(sym, SYMBOL_TRADE_STOPS_LEVEL);
+   int freeze = (int)SymbolInfoInteger(sym, SYMBOL_TRADE_FREEZE_LEVEL);
+   double need = MathMax(stops, freeze) * point;
+   double spread = SymbolInfoDouble(sym, SYMBOL_ASK) - SymbolInfoDouble(sym, SYMBOL_BID);
+   if(spread < 0) spread = 0;
+   if(need < spread) need = spread;
+   if(need < point) need = point;
+   return (type == POSITION_TYPE_BUY) ? market - need : market + need;
+}
+
 void CheckBreakEven()
 {
-   if(BreakEvenProfitUSD <= 0) return;
+   if(BreakEvenProfitUSD <= 0 && LockProfitTriggerUSD <= 0) return;
    for(int i = PositionsTotal() - 1; i >= 0; i--)
    {
       ulong ticket = PositionGetTicket(i);
@@ -269,8 +472,6 @@ void CheckBreakEven()
       if((int)PositionGetInteger(POSITION_MAGIC) != Magic) continue;
 
       double profit = PositionGetDouble(POSITION_PROFIT);
-      if(profit < BreakEvenProfitUSD) continue;
-
       double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
       double currentSL = PositionGetDouble(POSITION_SL);
       double currentTP = PositionGetDouble(POSITION_TP);
@@ -278,36 +479,71 @@ void CheckBreakEven()
       string sym = PositionGetString(POSITION_SYMBOL);
       int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
       double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+      double volume = PositionGetDouble(POSITION_VOLUME);
       string comment = PositionGetString(POSITION_COMMENT);
+      double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+      double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+      if(bid <= 0 || ask <= 0) continue;
 
-      bool needsMove = false;
+      string status = "";
+      string message = "";
+      double targetSL = 0;
+      if(LockProfitTriggerUSD > 0 && LockProfitUSD > 0 && profit + 1e-8 >= LockProfitTriggerUSD)
+      {
+         double lockDist = MoneyToPrice(sym, volume, LockProfitUSD);
+         if(lockDist <= 0) continue;
+         targetSL = (type == POSITION_TYPE_BUY) ? openPrice + lockDist : openPrice - lockDist;
+         status = "sl_lock";
+         message = sym + " #" + IntegerToString((int)ticket) + ": profit $" + DoubleToString(profit, 2)
+            + ". SL moved to lock $" + DoubleToString(LockProfitUSD, 2) + ".";
+      }
+      else if(BreakEvenProfitUSD > 0 && profit + 1e-8 >= BreakEvenProfitUSD)
+      {
+         targetSL = openPrice;
+         status = "sl_to_entry";
+         message = sym + " #" + IntegerToString((int)ticket) + ": profit $" + DoubleToString(profit, 2) + ". SL moved to entry.";
+      }
+      else continue;
+
+      double market = (type == POSITION_TYPE_BUY) ? bid : ask;
+      double spread = ask - bid;
+      double cushion = (type == POSITION_TYPE_BUY) ? (market - targetSL) : (targetSL - market);
+      // A wide bid-ask gap would tag a stop that sits inside it. Keep the
+      // planned room outside that gap instead of tightening into it.
+      if(SpreadWidenRatio > 0 && spread > 0 && cushion > 0 && spread > cushion * SpreadWidenRatio)
+      {
+         if(type == POSITION_TYPE_BUY) targetSL = MathMin(targetSL, market - spread);
+         else targetSL = MathMax(targetSL, market + spread);
+      }
+      double limit = RoomForStop(sym, type, market);
       if(type == POSITION_TYPE_BUY)
       {
-         if(currentSL < openPrice - point) needsMove = true;
+         if(targetSL > limit) targetSL = limit;
+         if(targetSL <= 0 || targetSL >= market) continue;
+         if(currentSL > 0 && targetSL <= currentSL + point) continue;
       }
-      else if(type == POSITION_TYPE_SELL)
+      else
       {
-         if(currentSL <= 0 || currentSL > openPrice + point) needsMove = true;
+         if(targetSL < limit) targetSL = limit;
+         if(targetSL <= market) continue;
+         if(currentSL > 0 && targetSL >= currentSL - point) continue;
       }
 
-      if(needsMove)
+      MqlTradeRequest req;
+      MqlTradeResult res;
+      ZeroMemory(req);
+      ZeroMemory(res);
+      req.action = TRADE_ACTION_SLTP;
+      req.position = ticket;
+      req.symbol = sym;
+      req.sl = NormalizeDouble(targetSL, digits);
+      req.tp = NormalizeDouble(currentTP, digits);
+      if(OrderSend(req, res) && (res.retcode == TRADE_RETCODE_DONE || res.retcode == TRADE_RETCODE_DONE_PARTIAL))
       {
-         MqlTradeRequest req;
-         MqlTradeResult res;
-         ZeroMemory(req);
-         ZeroMemory(res);
-         req.action = TRADE_ACTION_SLTP;
-         req.position = ticket;
-         req.symbol = sym;
-         req.sl = NormalizeDouble(openPrice, digits);
-         req.tp = NormalizeDouble(currentTP, digits);
-         if(OrderSend(req, res) && (res.retcode == TRADE_RETCODE_DONE || res.retcode == TRADE_RETCODE_DONE_PARTIAL))
-         {
-            Print("Moved SL to entry for ticket ", ticket, " at profit $", DoubleToString(profit, 2));
-            LastNote = sym + " #" + IntegerToString((int)ticket) + ": profit reached $" + DoubleToString(profit, 2) + ". SL moved to entry.";
-            Paint();
-            Report(comment, "sl_to_entry", ticket, openPrice, profit, sym, "Profit reached $" + DoubleToString(profit, 2) + ". Stop loss moved to entry.");
-         }
+         Print(message);
+         LastNote = message;
+         Paint();
+         Report(DigitsOnly(comment), status, ticket, req.sl, profit, sym, message);
       }
    }
 }
@@ -357,34 +593,31 @@ void PlaceLine(const string line)
       return;
    }
 
-   string chosen = "";
-   string options[];
-   int count = StringSplit(names, ',', options);
-   for(int i = 0; i < count; i++)
-   {
-      string candidate = options[i];
-      StringTrimLeft(candidate);
-      StringTrimRight(candidate);
-      if(UseSymbol(candidate)) { chosen = candidate; break; }
-   }
+   string chosen = ResolveSymbol(names, entry);
    if(chosen == "")
    {
       Report(id, "not_placed", 0, 0, 0, "", "None of the symbol names are on this platform.");
       LastNote = "No symbol for order " + id + " (" + names + ").";
       return;
    }
+   bool anchored = IsAnchoredMarket(chosen);
    int spread = (int)SymbolInfoInteger(chosen, SYMBOL_SPREAD);
    int digits = (int)SymbolInfoInteger(chosen, SYMBOL_DIGITS);
-   int maxSpread = MaxSpreadPoints;
-   if(MaxSpreadPoints > 0 && (digits <= 2 || StringFind(chosen, "GOLD") >= 0 || StringFind(chosen, "XAU") >= 0 || StringFind(chosen, "SILVER") >= 0 || StringFind(chosen, "XAG") >= 0 || StringFind(chosen, "OIL") >= 0 || StringFind(chosen, "BRENT") >= 0 || StringFind(chosen, "COPPER") >= 0 || StringFind(chosen, "NGAS") >= 0 || StringFind(chosen, "NATGAS") >= 0 || StringFind(chosen, "SOY") >= 0 || StringFind(chosen, "US30") >= 0 || StringFind(chosen, "US100") >= 0 || StringFind(chosen, "US500") >= 0 || StringFind(chosen, "GER40") >= 0 || StringFind(chosen, "JP225") >= 0 || StringFind(chosen, "VOLX") >= 0 || StringFind(chosen, "VIX") >= 0))
+   double bid = SymbolInfoDouble(chosen, SYMBOL_BID);
+   double ask = SymbolInfoDouble(chosen, SYMBOL_ASK);
+   double spreadPrice = ask - bid;
+   if(spreadPrice < 0) spreadPrice = 0;
+   if(!anchored)
    {
-      maxSpread = MaxSpreadPoints * 15;
-   }
-   if(MaxSpreadPoints > 0 && spread > maxSpread)
-   {
-      Report(id, "not_placed", 0, 0, 0, chosen, "Spread is wider than the copier allows.");
-      LastNote = chosen + " spread is " + IntegerToString(spread) + " points.";
-      return;
+      int maxSpread = MaxSpreadPoints;
+      if(MaxSpreadPoints > 0 && (digits <= 2 || StringFind(chosen, "US30") >= 0 || StringFind(chosen, "US100") >= 0 || StringFind(chosen, "US500") >= 0 || StringFind(chosen, "GER40") >= 0 || StringFind(chosen, "JP225") >= 0 || StringFind(chosen, "VOLX") >= 0 || StringFind(chosen, "VIX") >= 0))
+         maxSpread = MaxSpreadPoints * 15;
+      if(MaxSpreadPoints > 0 && spread > maxSpread)
+      {
+         Report(id, "not_placed", 0, 0, 0, chosen, "Spread is wider than the copier allows.");
+         LastNote = chosen + " spread is " + IntegerToString(spread) + " points.";
+         return;
+      }
    }
    lots = FitLots(chosen, lots);
    if(lots <= 0)
@@ -393,27 +626,59 @@ void PlaceLine(const string line)
       LastNote = "Size too small on " + chosen + ".";
       return;
    }
-   double price = (side == "buy") ? SymbolInfoDouble(chosen, SYMBOL_ASK) : SymbolInfoDouble(chosen, SYMBOL_BID);
-   if(chase > 0 && MathAbs(price - entry) > chase)
+   double price = (side == "buy") ? ask : bid;
+   if(anchored && price > 0 && spreadPrice > price * 0.08)
+   {
+      Report(id, "not_placed", 0, price, lots, chosen, "Spread is too wide to price the stop.");
+      LastNote = chosen + " spread is too wide to price the stop.";
+      return;
+   }
+   // Metals and commodities are signaled from Yahoo and filled here.
+   // A different cash price is not a reason to skip the trade.
+   if(!anchored && chase > 0 && MathAbs(price - entry) > chase)
    {
       Report(id, "not_placed", 0, price, lots, chosen, "Price moved away from the signal.");
       LastNote = chosen + " moved away from the signal. Not chasing.";
       return;
    }
    double point = SymbolInfoDouble(chosen, SYMBOL_POINT);
-   double slDist = MathAbs(entry - sl);
+   double scale = anchored ? QuoteScale(entry, price) : 1.0;
+   double slDist = MathAbs(entry - sl) * scale;
    double tpDist = slDist; // Exact distance as stop loss (1:1 Risk-to-Reward)
-   double final_sl = (side == "buy") ? (price - slDist) : (price + slDist);
-   double final_tp = (side == "buy") ? (price + tpDist) : (price - tpDist);
+   double planned = slDist;
+   if(anchored && SpreadWidenRatio > 0 && planned > 0 && spreadPrice > planned * SpreadWidenRatio)
+      slDist += spreadPrice;
 
    int stops = (int)SymbolInfoInteger(chosen, SYMBOL_TRADE_STOPS_LEVEL);
    double minDist = stops * point;
-   if(minDist > 0 && (MathAbs(price - final_sl) < minDist || MathAbs(price - final_tp) < minDist))
+   if(minDist > 0 && slDist < minDist)
    {
-      Report(id, "not_placed", 0, price, lots, chosen, "Stop or target is closer than the broker allows.");
-      LastNote = chosen + " rejected the stop distance.";
-      return;
+      if(!anchored)
+      {
+         Report(id, "not_placed", 0, price, lots, chosen, "Stop or target is closer than the broker allows.");
+         LastNote = chosen + " rejected the stop distance.";
+         return;
+      }
+      slDist = minDist;
    }
+   if(minDist > 0 && tpDist < minDist)
+   {
+      if(!anchored)
+      {
+         Report(id, "not_placed", 0, price, lots, chosen, "Stop or target is closer than the broker allows.");
+         LastNote = chosen + " rejected the stop distance.";
+         return;
+      }
+      tpDist = minDist;
+   }
+   if(anchored && planned > 0 && slDist > planned)
+   {
+      double shrunk = FitLots(chosen, lots * planned / slDist);
+      if(shrunk > 0) lots = shrunk;
+   }
+   double final_sl = (side == "buy") ? (price - slDist) : (price + slDist);
+   double final_tp = (side == "buy") ? (price + tpDist) : (price - tpDist);
+   string fillNote = (anchored && slDist > planned + point) ? "filled, stop widened for the spread" : "filled";
    MqlTradeRequest req;
    MqlTradeResult res;
    ZeroMemory(req);
@@ -437,7 +702,7 @@ void PlaceLine(const string line)
       return;
    }
    MarkDeliveryProcessed(id);
-   Report(id, "placed", res.order, res.price > 0 ? res.price : price, res.volume > 0 ? res.volume : lots, chosen, "filled");
+   Report(id, "placed", res.order, res.price > 0 ? res.price : price, res.volume > 0 ? res.volume : lots, chosen, fillNote);
    LastNote = chosen + " " + side + " filled, ticket " + IntegerToString((int)res.order) + ".";
 }
 

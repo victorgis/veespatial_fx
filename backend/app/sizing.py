@@ -41,9 +41,61 @@ def default_min_lot(spec: Symbol, account_type: str, platform: str) -> float:
     return 0.01
 
 
+# Cash metals, energies, and commodities are signaled from Yahoo (often a futures
+# contract) and filled on the broker's cash quote. The prices are not the same
+# number. The copier still places the trade and keeps the stop distance.
+ANCHORED_GROUPS = ("metal", "energy", "commodity")
+
+
 def chase_limit(entry: float, sl: float, pip: float) -> float:
     """How far price may run from the signal before the copier refuses to chase."""
     return max(abs(entry - sl) * 0.40, pip * 5)
+
+
+def chase_for(spec: Symbol, entry: float, sl: float) -> float:
+    """Currencies keep the chase limit. Anchored markets are filled at the broker price."""
+    if spec.group in ANCHORED_GROUPS:
+        return 0.0
+    return chase_limit(entry, sl, spec.pip)
+
+
+def quote_scale(signal_price: float, broker_price: float) -> float:
+    """Power-of-ten factor when the broker quotes a different unit (cents vs dollars).
+
+    A futures-versus-cash gap on the same unit stays at 1, so the stop distance
+    is copied across unchanged.
+    """
+    if signal_price <= 0 or broker_price <= 0:
+        return 1.0
+    ratio = broker_price / signal_price
+    if ratio <= 0:
+        return 1.0
+    log_r = math.log10(ratio)
+    power = round(log_r)
+    if abs(power) >= 1 and abs(log_r - power) <= math.log10(1.8):
+        return 10.0 ** power
+    return 1.0
+
+
+def rebase_levels(
+    side: str,
+    entry: float,
+    sl: float,
+    tp: float,
+    bid: float,
+    ask: float,
+) -> tuple[float, float, float]:
+    """Move a signal onto the broker quote, keeping the stop and target distances.
+
+    Buys anchor on the ask, sells on the bid, because that is the fill price.
+    """
+    anchor = ask if side == "buy" else bid
+    if anchor <= 0:
+        anchor = bid if bid > 0 else ask
+    if anchor <= 0 or entry <= 0:
+        return entry, sl, tp
+    scale = quote_scale(entry, anchor)
+    return anchor, anchor + (sl - entry) * scale, anchor + (tp - entry) * scale
 
 
 def _finish(

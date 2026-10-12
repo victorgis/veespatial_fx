@@ -8,13 +8,15 @@ from sqlalchemy.orm import Session
 
 from app.models import BrokerSpec, LastPrice, Settings
 from app.sizing import (
+    ANCHORED_GROUPS,
     LotResult,
-    chase_limit,
+    chase_for,
     detect_account_type,
     lots_from_contract,
     lots_from_ticks,
+    rebase_levels,
 )
-from app.symbols import Symbol, aliases_for, contract_size_for, get_symbol
+from app.symbols import Symbol, aliases_for, broker_symbol_matches, contract_size_for, get_symbol
 from app.wording import copy_text, mismatch_message
 
 
@@ -57,13 +59,40 @@ def account_mismatch(settings: Settings) -> tuple[bool, str | None]:
 
 
 def _pick_spec(rows: list[BrokerSpec], spec: Symbol, settings: Settings) -> BrokerSpec | None:
-    names = {a.upper() for a in aliases_for(spec, settings.alias_overrides)}
-    matches = [r for r in rows if r.broker_symbol.upper() in names]
+    names = aliases_for(spec, settings.alias_overrides)
+    matches = [r for r in rows if broker_symbol_matches(r.broker_symbol, names)]
     if not matches:
         return None
     target = contract_size_for(spec, settings.account_type)
-    matches.sort(key=lambda r: (abs(r.contract_size - target), r.broker_symbol))
+    # Cash CFDs (OILCash, NGASCash) are the markets the desk signals.
+    # A futures month with the same contract size must not win the tie.
+    matches.sort(
+        key=lambda r: (
+            0 if "CASH" in r.broker_symbol.upper() else 1,
+            abs(r.contract_size - target),
+            len(r.broker_symbol),
+            r.broker_symbol,
+        )
+    )
     return matches[0]
+
+
+def anchor_levels(
+    spec: Symbol,
+    side: str,
+    entry: float,
+    sl: float,
+    tp: float,
+    rows: list[BrokerSpec],
+    settings: Settings,
+) -> tuple[float, float, float]:
+    """Express a metal, energy, or commodity signal on the connected quote."""
+    if spec.group not in ANCHORED_GROUPS:
+        return entry, sl, tp
+    live = _pick_spec(rows, spec, settings)
+    if live is None:
+        return entry, sl, tp
+    return rebase_levels(side, entry, sl, tp, live.bid, live.ask)
 
 
 def _spec_conflicts(row: BrokerSpec, spec: Symbol, account_type: str) -> bool:
@@ -177,7 +206,7 @@ def build_quote(
         balance_source=source,
         balance=balance,
         blocked=blocked,
-        chase=chase_limit(entry, sl, spec.pip),
+        chase=chase_for(spec, entry, sl),
         broker_symbol=broker_symbol,
         copy=text,
     )

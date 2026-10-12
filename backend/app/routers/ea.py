@@ -6,9 +6,22 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.ea_proto import OrderOut, format_orders, parse_execution, parse_heartbeat
 from app.models import BrokerSpec, Delivery, Settings, Signal, User, utcnow
-from app.quotes import account_mismatch, build_quote
+from app.quotes import account_mismatch, anchor_levels, build_quote
 from app.security import current_ea_user
-from app.symbols import aliases_for, get_symbol
+from app.sizing import ANCHORED_GROUPS
+from app.symbols import SYMBOLS, aliases_for, get_symbol
+
+_ANCHORED_IDS = tuple(spec.id for spec in SYMBOLS if spec.group in ANCHORED_GROUPS)
+# These rejects were the commodity failures: Yahoo vs MT5 price, the old
+# symbol name, a wide spread, or a stop the broker called too close.
+_RETRY_REASONS = (
+    "Price moved away from the signal.",
+    "None of the symbol names are on this platform.",
+    "Spread is wider than the copier allows.",
+    "Stop or target is closer than the broker allows.",
+    "The size is below this symbol's minimum.",
+    "Spread is too wide to price the stop.",
+)
 
 router = APIRouter(prefix="/api/ea", tags=["ea"])
 
@@ -81,6 +94,25 @@ def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db))
         text = format_orders(row.trade_mode, row.account_type, message or "paused", [])
         return Response(content=text, media_type="text/plain")
 
+    failed = (
+        db.query(Delivery, Signal)
+        .join(Signal, Signal.id == Delivery.signal_id)
+        .filter(
+            Delivery.user_id == user.id,
+            Delivery.status == "not_placed",
+            Signal.status == "active",
+            Signal.symbol_id.in_(_ANCHORED_IDS),
+        )
+        .all()
+    )
+    now = utcnow()
+    for delivery, _signal in failed:
+        if any(reason in (delivery.message or "") for reason in _RETRY_REASONS):
+            delivery.status = "queued"
+            delivery.message = "Waiting for your platform."
+            delivery.updated_at = now
+    db.flush()
+
     queued = (
         db.query(Delivery, Signal)
         .join(Signal, Signal.id == Delivery.signal_id)
@@ -95,7 +127,9 @@ def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db))
         spec = get_symbol(signal.symbol_id)
         if spec is None:
             continue
-        quote = build_quote(db, row, spec, signal.side, signal.entry, signal.sl, signal.tp)
+        specs = db.query(BrokerSpec).filter(BrokerSpec.user_id == user.id).all()
+        entry, sl, tp = anchor_levels(spec, signal.side, signal.entry, signal.sl, signal.tp, specs, row)
+        quote = build_quote(db, row, spec, signal.side, entry, sl, tp, broker_specs=specs)
         if quote.blocked:
             delivery.status = "paused"
             delivery.message = quote.reason or "Paused."
@@ -107,16 +141,16 @@ def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db))
             delivery.updated_at = utcnow()
             continue
         names = list(aliases_for(spec, row.alias_overrides))
-        if quote.broker_symbol and quote.broker_symbol not in names:
-            names.insert(0, quote.broker_symbol)
+        if quote.broker_symbol:
+            names = [quote.broker_symbol] + [name for name in names if name != quote.broker_symbol]
         outgoing.append(
             OrderOut(
                 delivery_id=delivery.id,
                 side=signal.side,
                 symbols=names,
-                entry=signal.entry,
-                sl=signal.sl,
-                tp=signal.tp,
+                entry=entry,
+                sl=sl,
+                tp=tp,
                 lots=quote.lots,
                 chase=quote.chase,
                 comment=f"fx{delivery.id}",
@@ -153,12 +187,21 @@ async def executions(request: Request, user: User = Depends(current_ea_user), db
     if delivery is None or delivery.user_id != user.id:
         raise HTTPException(status_code=404, detail="That order is not on this account.")
     if report.status == "sl_to_entry":
-        delivery.message = report.message or "Profit reached $2.00. Stop loss moved to entry."
+        delivery.message = report.message or "Profit reached $4. Stop loss moved to entry."
         delivery.updated_at = utcnow()
         signal = db.get(Signal, delivery.signal_id)
         if signal and signal.status == "active":
             signal.sl = signal.entry
-            signal.rationale = f"{signal.rationale} [SL moved to entry at +$2.00 profit]"
+            if "[SL moved to entry]" not in (signal.rationale or ""):
+                signal.rationale = f"{signal.rationale} [SL moved to entry]"
+    elif report.status == "sl_lock":
+        delivery.message = report.message or "Profit reached $5. Stop loss moved to lock $1."
+        delivery.updated_at = utcnow()
+        signal = db.get(Signal, delivery.signal_id)
+        if signal and signal.status == "active" and report.fill_price:
+            signal.sl = report.fill_price
+            if "[SL locked $1]" not in (signal.rationale or ""):
+                signal.rationale = f"{signal.rationale} [SL locked $1]"
     elif report.status == "tp_hit":
         delivery.message = report.message or "Take profit hit on MT5."
         delivery.updated_at = utcnow()
@@ -209,12 +252,20 @@ async def events(request: Request, user: User = Depends(current_ea_user), db: Se
 
     if delivery is not None:
         if status == "sl_to_entry":
-            delivery.message = message or "Profit reached $2.00. Stop loss moved to entry."
+            delivery.message = message or "Profit reached $4. Stop loss moved to entry."
             delivery.updated_at = utcnow()
             signal = db.get(Signal, delivery.signal_id)
             if signal and signal.status == "active":
                 signal.sl = signal.entry
-                signal.rationale = f"{signal.rationale} [SL moved to entry at +$2.00 profit]"
+                if "[SL moved to entry]" not in (signal.rationale or ""):
+                    signal.rationale = f"{signal.rationale} [SL moved to entry]"
+        elif status == "sl_lock":
+            delivery.message = message or "Profit reached $5. Stop loss moved to lock $1."
+            delivery.updated_at = utcnow()
+            signal = db.get(Signal, delivery.signal_id)
+            if signal and signal.status == "active":
+                if "[SL locked $1]" not in (signal.rationale or ""):
+                    signal.rationale = f"{signal.rationale} [SL locked $1]"
         elif status == "tp_hit":
             delivery.message = message or "Take profit hit on MT5."
             delivery.updated_at = utcnow()

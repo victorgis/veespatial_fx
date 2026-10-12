@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.ea_proto import format_orders, parse_heartbeat
 from app.market import FetchResult, set_market_override
 from app.strategy import Bar, SignalDraft
@@ -322,6 +324,92 @@ def test_automatic_cap_keeps_extra_signals_on_telegram(client, monkeypatch):
     manual_home = client.get("/api/dashboard", headers=manual).json()
     assert {row["delivery_status"] for row in manual_home["signals"]} == {"for_you"}
     assert len(manual_home["signals"]) == 4
+
+
+def test_close_is_not_sent_to_telegram(client, monkeypatch):
+    market = _install_market(monkeypatch)
+    sent: list[str] = []
+    monkeypatch.setattr("app.scan.telegram_send", lambda text: sent.append(text) or True)
+    headers = _auth(client, "close-quiet@example.com")
+    _save(client, headers, trade_mode="manual")
+    first = client.post("/api/system/scan", headers=headers)
+    assert first.status_code == 200, first.text
+    assert len(sent) == 1
+    assert "BUY" in sent[0]
+    market.phase = 2
+    sent.clear()
+    second = client.post("/api/system/scan", headers=headers)
+    assert second.status_code == 200, second.text
+    assert all("reached the target" not in text and "hit the stop" not in text for text in sent)
+
+
+def test_oil_order_is_anchored_to_the_mt5_price(client):
+    headers = _auth(client, "oil@example.com")
+    saved = _save(
+        client,
+        headers,
+        trade_mode="auto",
+        account_type="standard",
+        max_lot=5,
+        planning_balance=10000,
+    )
+    key = saved["ea_key"]
+    user_id = client.get("/api/me", headers=headers).json()["user"]["id"]
+    beat = "\n".join(
+        [
+            "platform=mt5",
+            "login=1",
+            "broker=XMTrading-MT5",
+            "balance=10000",
+            "equity=10000",
+            "currency=USD",
+            "fx_contract=100000",
+            "fx_symbol=EURUSD",
+            "spec=EURUSD|100000|0.00001|1|0.01|50|0.01|5|1.10000|1.10020",
+            "spec=OILCash|100|0.01|1|0.01|50|0.01|3|77.20|77.25",
+        ]
+    )
+    heartbeat = client.post("/api/ea/heartbeat", content=beat, headers={"X-Api-Key": key})
+    assert heartbeat.status_code == 200, heartbeat.text
+    from app.database import session_scope
+    from app.models import Delivery, Signal
+
+    db = session_scope()
+    signal = Signal(
+        symbol_id="oil",
+        side="buy",
+        entry=80.0,
+        sl=79.5,
+        tp=81.0,
+        atr=0.4,
+        rsi=48,
+        candle_time=datetime(2026, 4, 1, tzinfo=timezone.utc),
+        source="test",
+        rationale="test",
+        status="active",
+    )
+    db.add(signal)
+    db.flush()
+    db.add(
+        Delivery(
+            signal_id=signal.id,
+            user_id=user_id,
+            status="not_placed",
+            message="Price moved away from the signal.",
+        )
+    )
+    db.commit()
+    db.close()
+    orders = client.get("/api/ea/orders", headers={"X-Api-Key": key})
+    assert orders.status_code == 200, orders.text
+    body = [line for line in orders.text.split("---", 1)[1].splitlines() if line.strip()]
+    assert len(body) == 1
+    parts = body[0].split("|")
+    assert "OILCash" in parts[2]
+    assert parts[2].split(",")[0] == "OILCash"
+    assert float(parts[3]) == pytest.approx(77.25)
+    assert float(parts[4]) == pytest.approx(76.75)
+    assert float(parts[7]) == pytest.approx(0.0)
 
 
 def test_order_formatter_and_copier_files():

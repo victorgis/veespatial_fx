@@ -102,9 +102,10 @@ export function Guide() {
             channel and on this desk for you to place by hand.
           </p>
           <p className="help">
-            Prices come from Yahoo Finance real-time market data feed. WTI and Brent are cash CFDs matching
-            XM’s OILCash and BRENTCash. The copier skips the order if the broker price has already moved more than a
-            quarter of the way to the stop.
+            Prices come from Yahoo Finance. A forex order is skipped if the broker price has already run
+            more than 40% of the way to the stop. Gold, silver, WTI, Brent, natural gas, copper, and soybeans
+            are filled at the MT5 price. The stop and target keep the same distance, rescaled when the
+            broker quotes a different unit.
           </p>
         </article>
       </div>
