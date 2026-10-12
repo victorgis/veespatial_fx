@@ -35,7 +35,9 @@ export function deliveryLabel(status: string | null): string {
     case "paused":
       return "Paused";
     case "placed":
-      return "Placed by your platform";
+      return "Placed on platform";
+    case "sl_to_entry":
+      return "Stop loss at entry (+$2 profit)";
     case "not_placed":
       return "Not placed";
     case "you_placed":
@@ -56,9 +58,11 @@ export function outcomeLabel(status: string): string {
     case "active":
       return "Open";
     case "target":
-      return "Target hit";
+      return "Take profit hit (1:1)";
     case "stopped":
       return "Stopped out";
+    case "breakeven":
+      return "Breakeven (SL at entry)";
     case "expired":
       return "Expired";
     default:

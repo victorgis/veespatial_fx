@@ -272,7 +272,7 @@ class IntradayParams:
     sell_rsi: tuple[float, float] = (42, 60)
     min_stop_atr: float = 1.5
     max_stop_atr: float = 2.5
-    target_r: float = 1.5
+    target_r: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -790,10 +790,10 @@ def evaluate_intraday(
         if raw > cur_atr * tuned.max_stop_atr:
             return finish("no entry: the stop would be wider than 2 times the 5-minute range")
         return finish("no entry: the swing does not give a stop")
-    target_r = calculate_supply_demand_tp(side, entry, distance, m15, cur_atr, spec.pip, tuned.target_r)
+    target_r = tuned.target_r
     built = _levels_r(side, entry, distance, spec.digits, target_r)
     if built is None:
         return finish("no entry: the stop rounded onto the entry")
     sl, tp = built
     draft = SignalDraft(side, entry, sl, tp, cur_atr, cur_rsi, bar.time)
-    return finish(f"entry: {side}, stop beyond the swing, target {target_r:g} times the stop", draft)
+    return finish(f"entry: {side}, stop beyond the swing, target {target_r:g} times the stop (1:1)", draft)

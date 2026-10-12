@@ -7,6 +7,7 @@ import { SettingsPage } from "./pages/settings";
 import { Setup } from "./pages/setup";
 import { Journal, SignalDetail, Signals } from "./pages/signals";
 import { Shell } from "./shell";
+import { NotificationProvider } from "./notifications";
 
 function RequireAuth() {
   const { ready, token } = useAuth();
@@ -47,7 +48,9 @@ function AppRoutes() {
 export function App() {
   return (
     <AuthProvider>
-      <AppRoutes />
+      <NotificationProvider>
+        <AppRoutes />
+      </NotificationProvider>
     </AuthProvider>
   );
 }

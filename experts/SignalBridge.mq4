@@ -15,8 +15,11 @@ input int    Magic            = 56021;
 input int    SlippagePoints   = 30;
 input int    MaxSpreadPoints  = 40;
 input double MaxLots          = 0;
+input double BreakEvenProfitUSD = 2.0; // Profit in USD from MT4 to move Stop Loss to Entry (0 = off)
 
 string LastNote = "Starting.";
+
+void CheckBreakEven();
 
 int OnInit()
 {
@@ -30,7 +33,17 @@ int OnInit()
 }
 
 void OnDeinit(const int reason) { EventKillTimer(); }
-void OnTimer() { Poll(); }
+
+void OnTimer()
+{
+   CheckBreakEven();
+   Poll();
+}
+
+void OnTick()
+{
+   CheckBreakEven();
+}
 
 string BaseUrl()
 {
@@ -281,13 +294,18 @@ void PlaceLine(string line)
       return;
    }
    double point = MarketInfo(chosen, MODE_POINT);
+   double slDist = MathAbs(entry - sl);
+   double tpDist = slDist; // Exact distance as stop loss (1:1 Risk-to-Reward)
+   double final_sl = (side == "buy") ? (price - slDist) : (price + slDist);
+   double final_tp = (side == "buy") ? (price + tpDist) : (price - tpDist);
    double minDist = MarketInfo(chosen, MODE_STOPLEVEL) * point;
-   if(minDist > 0 && (MathAbs(price - sl) < minDist || MathAbs(price - tp) < minDist))
+   if(minDist > 0 && (MathAbs(price - final_sl) < minDist || MathAbs(price - final_tp) < minDist))
    {
       Report(id, "not_placed", 0, price, lots, chosen, "Stop or target is closer than the broker allows.");
       return;
+   }
    int cmd = (side == "buy") ? OP_BUY : OP_SELL;
-   int ticket = OrderSend(chosen, cmd, lots, NormalizeDouble(price, digits), SlippagePoints, NormalizeDouble(sl, digits), NormalizeDouble(tp, digits), comment, Magic, 0, clrNONE);
+   int ticket = OrderSend(chosen, cmd, lots, NormalizeDouble(price, digits), SlippagePoints, NormalizeDouble(final_sl, digits), NormalizeDouble(final_tp, digits), comment, Magic, 0, clrNONE);
    if(ticket < 0)
    {
       Report(id, "not_placed", 0, price, lots, chosen, "OrderSend error " + IntegerToString(GetLastError()));
@@ -299,6 +317,48 @@ void PlaceLine(string line)
    else
       Report(id, "placed", ticket, price, lots, chosen, "filled");
    LastNote = chosen + " " + side + " filled, ticket " + IntegerToString(ticket) + ".";
+}
+
+void CheckBreakEven()
+{
+   if(BreakEvenProfitUSD <= 0) return;
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != Magic) continue;
+      if(OrderProfit() < BreakEvenProfitUSD) continue;
+
+      double openPrice = OrderOpenPrice();
+      double currentSL = OrderStopLoss();
+      double currentTP = OrderTakeProfit();
+      int type = OrderType();
+      string sym = OrderSymbol();
+      int digits = (int)MarketInfo(sym, MODE_DIGITS);
+      double point = MarketInfo(sym, MODE_POINT);
+      string comment = OrderComment();
+      int ticket = OrderTicket();
+
+      bool needsMove = false;
+      if(type == OP_BUY)
+      {
+         if(currentSL < openPrice - point) needsMove = true;
+      }
+      else if(type == OP_SELL)
+      {
+         if(currentSL <= 0 || currentSL > openPrice + point) needsMove = true;
+      }
+
+      if(needsMove)
+      {
+         if(OrderModify(ticket, openPrice, NormalizeDouble(openPrice, digits), NormalizeDouble(currentTP, digits), 0, clrNONE))
+         {
+            Print("Moved SL to entry for ticket ", ticket, " at profit $", DoubleToString(OrderProfit(), 2));
+            LastNote = sym + " #" + IntegerToString(ticket) + ": profit reached $" + DoubleToString(OrderProfit(), 2) + ". SL moved to entry.";
+            Paint();
+            Report(comment, "sl_to_entry", ticket, openPrice, OrderProfit(), sym, "Profit reached $" + DoubleToString(OrderProfit(), 2) + ". Stop loss moved to entry.");
+         }
+      }
+   }
 }
 
 void Poll()

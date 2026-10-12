@@ -3,11 +3,13 @@ import { Link } from "react-router-dom";
 import { desk } from "../api";
 import { useAuth } from "../auth";
 import { when } from "../format";
+import { useNotifications } from "../notifications";
 import type { Dashboard } from "../types";
 import { Banner, SignalCard } from "../ui";
 
 export function Home() {
   const { me, refresh } = useAuth();
+  const { permission, requestPermission } = useNotifications();
   const [data, setData] = useState<Dashboard | null>(null);
   const [error, setError] = useState("");
   const [scanning, setScanning] = useState(false);
@@ -34,6 +36,19 @@ export function Home() {
         <p className="lede">{data.me.status_line}</p>
       </header>
       <div className="stack">
+        {permission !== "granted" ? (
+          <div className="card" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12 }}>
+            <div>
+              <strong>🔔 Desktop Notifications</strong>
+              <p className="help" style={{ marginTop: 2 }}>
+                Receive instant alerts when orders are placed on MT5, when Stop Loss is moved to Entry (+$2 profit), and when Take Profit hits.
+              </p>
+            </div>
+            <button className="btn primary" type="button" onClick={requestPermission}>
+              Enable
+            </button>
+          </div>
+        ) : null}
         {auto && conn.mismatch && conn.mismatch_message ? <Banner tone="bad" title="Automatic orders are paused" children={conn.mismatch_message} /> : null}
         {auto && !conn.online && !conn.mismatch ? (
           <Banner tone="warn" title="Your platform is not connected">

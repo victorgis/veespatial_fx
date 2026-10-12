@@ -19,8 +19,11 @@ input int    Magic            = 56021;
 input int    SlippagePoints   = 30;
 input int    MaxSpreadPoints  = 40;
 input double MaxLots          = 0; // 0 = no extra ceiling. The website max lot still applies.
+input double BreakEvenProfitUSD = 2.0; // Profit in USD from MT5 to move Stop Loss to Entry (0 = off)
 
 string LastNote = "Starting.";
+
+void CheckBreakEven();
 
 int OnInit()
 {
@@ -35,7 +38,16 @@ int OnInit()
 
 void OnDeinit(const int reason) { EventKillTimer(); }
 
-void OnTimer() { Poll(); }
+void OnTimer()
+{
+   CheckBreakEven();
+   Poll();
+}
+
+void OnTick()
+{
+   CheckBreakEven();
+}
 
 string BaseUrl()
 {
@@ -247,6 +259,59 @@ double FitLots(const string symbol, double lots)
    return lots;
 }
 
+void CheckBreakEven()
+{
+   if(BreakEvenProfitUSD <= 0) return;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong ticket = PositionGetTicket(i);
+      if(ticket == 0 || !PositionSelectByTicket(ticket)) continue;
+      if((int)PositionGetInteger(POSITION_MAGIC) != Magic) continue;
+
+      double profit = PositionGetDouble(POSITION_PROFIT);
+      if(profit < BreakEvenProfitUSD) continue;
+
+      double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+      double currentSL = PositionGetDouble(POSITION_SL);
+      double currentTP = PositionGetDouble(POSITION_TP);
+      long type = PositionGetInteger(POSITION_TYPE);
+      string sym = PositionGetString(POSITION_SYMBOL);
+      int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+      double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+      string comment = PositionGetString(POSITION_COMMENT);
+
+      bool needsMove = false;
+      if(type == POSITION_TYPE_BUY)
+      {
+         if(currentSL < openPrice - point) needsMove = true;
+      }
+      else if(type == POSITION_TYPE_SELL)
+      {
+         if(currentSL <= 0 || currentSL > openPrice + point) needsMove = true;
+      }
+
+      if(needsMove)
+      {
+         MqlTradeRequest req;
+         MqlTradeResult res;
+         ZeroMemory(req);
+         ZeroMemory(res);
+         req.action = TRADE_ACTION_SLTP;
+         req.position = ticket;
+         req.symbol = sym;
+         req.sl = NormalizeDouble(openPrice, digits);
+         req.tp = NormalizeDouble(currentTP, digits);
+         if(OrderSend(req, res) && (res.retcode == TRADE_RETCODE_DONE || res.retcode == TRADE_RETCODE_DONE_PARTIAL))
+         {
+            Print("Moved SL to entry for ticket ", ticket, " at profit $", DoubleToString(profit, 2));
+            LastNote = sym + " #" + IntegerToString((int)ticket) + ": profit reached $" + DoubleToString(profit, 2) + ". SL moved to entry.";
+            Paint();
+            Report(comment, "sl_to_entry", ticket, openPrice, profit, sym, "Profit reached $" + DoubleToString(profit, 2) + ". Stop loss moved to entry.");
+         }
+      }
+   }
+}
+
 void PlaceLine(const string line)
 {
    string parts[];
@@ -337,7 +402,7 @@ void PlaceLine(const string line)
    }
    double point = SymbolInfoDouble(chosen, SYMBOL_POINT);
    double slDist = MathAbs(entry - sl);
-   double tpDist = MathAbs(entry - tp);
+   double tpDist = slDist; // Exact distance as stop loss (1:1 Risk-to-Reward)
    double final_sl = (side == "buy") ? (price - slDist) : (price + slDist);
    double final_tp = (side == "buy") ? (price + tpDist) : (price - tpDist);
 

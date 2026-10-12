@@ -152,7 +152,22 @@ async def executions(request: Request, user: User = Depends(current_ea_user), db
     delivery = db.get(Delivery, report.delivery_id)
     if delivery is None or delivery.user_id != user.id:
         raise HTTPException(status_code=404, detail="That order is not on this account.")
-    if delivery.status != "placed":
+    if report.status == "sl_to_entry":
+        delivery.message = report.message or "Profit reached $2.00. Stop loss moved to entry."
+        delivery.updated_at = utcnow()
+        signal = db.get(Signal, delivery.signal_id)
+        if signal and signal.status == "active":
+            signal.sl = signal.entry
+            signal.rationale = f"{signal.rationale} [SL moved to entry at +$2.00 profit]"
+    elif report.status == "tp_hit":
+        delivery.message = report.message or "Take profit hit on MT5."
+        delivery.updated_at = utcnow()
+        signal = db.get(Signal, delivery.signal_id)
+        if signal and signal.status == "active":
+            signal.status = "target"
+            signal.close_price = report.fill_price or signal.tp
+            signal.closed_at = utcnow()
+    elif delivery.status != "placed":
         delivery.status = "placed" if report.status == "placed" else "not_placed"
         delivery.ticket = report.ticket or None
         delivery.fill_price = report.fill_price
@@ -166,4 +181,46 @@ async def executions(request: Request, user: User = Depends(current_ea_user), db
         if row is not None and report.status == "placed":
             row.last_ea_error = None
     db.commit()
+    return Response(content="ok\n", media_type="text/plain")
+
+
+@router.post("/events")
+async def events(request: Request, user: User = Depends(current_ea_user), db: Session = Depends(get_db)) -> Response:
+    raw = await request.body()
+    data: dict[str, str] = {}
+    for line in raw.decode("utf-8", errors="replace").splitlines():
+        if "=" in line:
+            k, v = line.split("=", 1)
+            data[k.strip()] = v.strip()
+    ticket_str = data.get("ticket", "")
+    status = data.get("status", "")
+    message = data.get("message", "")
+
+    delivery = None
+    if ticket_str:
+        delivery = db.query(Delivery).filter(Delivery.ticket == ticket_str, Delivery.user_id == user.id).first()
+    if delivery is None:
+        delivery = (
+            db.query(Delivery)
+            .filter(Delivery.user_id == user.id, Delivery.status == "placed")
+            .order_by(Delivery.id.desc())
+            .first()
+        )
+
+    if delivery is not None:
+        if status == "sl_to_entry":
+            delivery.message = message or "Profit reached $2.00. Stop loss moved to entry."
+            delivery.updated_at = utcnow()
+            signal = db.get(Signal, delivery.signal_id)
+            if signal and signal.status == "active":
+                signal.sl = signal.entry
+                signal.rationale = f"{signal.rationale} [SL moved to entry at +$2.00 profit]"
+        elif status == "tp_hit":
+            delivery.message = message or "Take profit hit on MT5."
+            delivery.updated_at = utcnow()
+            signal = db.get(Signal, delivery.signal_id)
+            if signal and signal.status == "active":
+                signal.status = "target"
+                signal.closed_at = utcnow()
+        db.commit()
     return Response(content="ok\n", media_type="text/plain")
