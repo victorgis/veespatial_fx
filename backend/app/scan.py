@@ -202,7 +202,7 @@ def _run() -> dict:
             fetched[symbol_id] = result
             if result.bars:
                 log.info(
-                    "%s: %s closed 5-minute candles through %s UTC",
+                    "%s: %s closed 15-minute candles through %s UTC",
                     spec.display,
                     len(result.bars),
                     result.bars[-1].time.strftime("%H:%M"),
@@ -275,7 +275,7 @@ def _run() -> dict:
             if not result.tradable:
                 if still is not None and not still.telegram_sent:
                     still.telegram_sent = _announce(db, spec, still)
-                log.info("%s: %s", spec.display, result.skip_reason or "no new 5-minute trade")
+                log.info("%s: %s", spec.display, result.skip_reason or "no new 15-minute trade")
                 continue
             checked = evaluate(
                 result.bars,

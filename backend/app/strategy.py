@@ -1,12 +1,12 @@
 """Signal rules.
 
-The desk publishes a 5-minute pullback inside a higher-timeframe trend.
+The desk publishes a 15-minute pullback inside a higher-timeframe trend.
 The 1-hour chart has to agree (price and the 50-hour average on the same
-side of the 200-hour average). The 15-minute swings have to agree, or at
-least not contradict. The 5-minute candle times the entry: RSI in a
+side of the 200-hour average). The 4-hour trend has to agree, or at
+least not contradict. The 15-minute candle times the entry: RSI in a
 pullback band and turning, MACD momentum turning with the trend, and the
 close back through the 50-bar average without being extended. The stop sits
-beyond the recent 5-minute swing. The target is 1.8 times that distance.
+beyond the recent 15-minute swing. The target is 1:1 matching the stop distance.
 
 `decide`, `levels`, and `evaluate` are the older hourly cross. They stay so
 their tests stay, and the scan does not call them.
@@ -419,7 +419,7 @@ def _check_line(
     verdict: str,
 ) -> str:
     return (
-        f"{display} 5m {_stamp(when)} UTC | {trend} | RSI {rsi_txt} | MA50 {ma50_txt} | "
+        f"{display} 15m {_stamp(when)} UTC | {trend} | RSI {rsi_txt} | MA50 {ma50_txt} | "
         f"EMA200 {ema200_txt} | MACD {macd_txt} | 15m {structure} | {verdict}"
     )
 
@@ -646,7 +646,7 @@ def evaluate_intraday(
     m1: list[Bar] | None = None,
     now: datetime | None = None,
 ) -> Decision:
-    """Judge the last closed 5-minute candle. Always returns a log line."""
+    """Judge the last closed 15-minute candle. Always returns a log line."""
     tuned = _intraday_params(params)
     now = now or datetime.now(timezone.utc)
     when = bars[-1].time if bars else None
@@ -654,7 +654,7 @@ def evaluate_intraday(
     if len(bars) < need:
         line = _check_line(
             spec.display, when, "1h waiting", "—", "—", "—", "—", "—",
-            f"no entry: need {need} closed 5-minute candles (have {len(bars)})",
+            f"no entry: need {need} closed 15-minute candles (have {len(bars)})",
         )
         return Decision(None, line)
 
@@ -687,7 +687,7 @@ def evaluate_intraday(
     if None in (cur_ma, prev_ma, cur_rsi, prev_rsi, cur_atr, cur_hist, prev_hist, cur_macd, cur_sig):
         line = _check_line(
             spec.display, when, "1h waiting", rsi_txt, ma_txt, "—", macd_txt, "—",
-            "no entry: 5-minute averages are not ready",
+            "no entry: 15-minute averages are not ready",
         )
         return Decision(None, line)
     assert cur_ma is not None and cur_rsi is not None and prev_rsi is not None
@@ -697,7 +697,7 @@ def evaluate_intraday(
     if cur_atr <= 0 or cur_atr > closes[i] * 0.15:
         line = _check_line(
             spec.display, when, "1h waiting", rsi_txt, ma_txt, "—", macd_txt, "—",
-            "no entry: the 5-minute range is not usable",
+            "no entry: the 15-minute range is not usable",
         )
         return Decision(None, line)
 
@@ -725,7 +725,8 @@ def evaluate_intraday(
     else:
         trend_txt = "1h flat"
 
-    structure = structure_of(m15 or [], tuned.swing_wing)
+    structure_source = m15 if (m15 and len(m15) >= 10) else bars
+    structure = structure_of(structure_source, tuned.swing_wing)
     struct_txt = structure.label
 
     def finish(verdict: str, draft: SignalDraft | None = None) -> Decision:
@@ -744,7 +745,7 @@ def evaluate_intraday(
     if not structure_allows(structure, side):
         return finish(f"no entry: 15-minute structure is {structure.label}")
 
-    # 5m Liquidity Sweep Filter
+    # 15m Liquidity Sweep Filter
     # if not _swept_liquidity(bars, side):
     #     return finish("no entry: price has not swept 20-bar liquidity")
 
@@ -791,7 +792,7 @@ def evaluate_intraday(
     if distance is None:
         raw = entry - swing if side == "buy" else swing - entry
         if raw > cur_atr * tuned.max_stop_atr:
-            return finish("no entry: the stop would be wider than 2 times the 5-minute range")
+            return finish("no entry: the stop would be wider than 2 times the 15-minute range")
         return finish("no entry: the swing does not give a stop")
     target_r = tuned.target_r
     built = _levels_r(side, entry, distance, spec.digits, target_r)

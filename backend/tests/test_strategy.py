@@ -224,3 +224,63 @@ def test_multi_timeframe_trend_conflict():
     bias_4h = _4h_bias(hourly, bars[-1].close)
     assert bias_4h in ("buy", "sell", "flat", None)
 
+
+def test_fifteen_minute_pullback_publishes_inside_the_hour_trend():
+    spec = get_symbol("eurusd")
+    assert spec is not None
+    start = datetime(2026, 3, 2, 8, tzinfo=timezone.utc)
+    bars: list[Bar] = []
+    price = 1.10
+    for i in range(120):
+        price += -0.00003 if i % 5 == 4 else 0.0001
+        prev = bars[-1].close if bars else price
+        when = start + timedelta(minutes=15 * len(bars))
+        bars.append(Bar(when, prev, max(prev, price) + 0.00008, min(prev, price) - 0.00008, price))
+    from app.strategy import atr
+
+    for _ in range(12):
+        average = ema([bar.close for bar in bars], 50)[-1]
+        width = atr(bars, 14)[-1]
+        assert average is not None and width is not None
+        if bars[-1].close - average < width * 0.6:
+            break
+        price = bars[-1].close - 0.00025
+        prev = bars[-1].close
+        when = start + timedelta(minutes=15 * len(bars))
+        bars.append(Bar(when, prev, max(prev, price) + 0.00008, min(prev, price) - 0.00008, price))
+    price = bars[-1].close + 0.00030
+    prev = bars[-1].close
+    when = start + timedelta(minutes=15 * len(bars))
+    bars.append(Bar(when, prev, max(prev, price) + 0.00005, min(prev, price) - 0.00005, price))
+
+    hourly: list[Bar] = []
+    level = bars[-1].close - 0.04
+    for i in range(230):
+        level += 0.04 / 230
+        hourly.append(
+            Bar(start + timedelta(hours=i), level - 0.0002, level + 0.0003, level - 0.0003, level)
+        )
+    floor = bars[-1].close - 0.02
+    m15 = []
+    for i in range(40):
+        mid = floor + 0.006
+        m15.append(Bar(start + timedelta(minutes=15 * i), mid, floor + 0.008, floor + 0.004, mid))
+    swings = {
+        6: (floor, floor + 0.006, floor + 0.003),
+        10: (floor + 0.006, floor + 0.014, floor + 0.012),
+        16: (floor + 0.003, floor + 0.008, floor + 0.005),
+        20: (floor + 0.008, floor + 0.018, floor + 0.016),
+        26: (floor + 0.005, floor + 0.010, floor + 0.008),
+        30: (floor + 0.010, floor + 0.020, floor + 0.018),
+    }
+    for index, (lo, hi, close) in swings.items():
+        m15[index] = Bar(m15[index].time, close, hi, lo, close)
+
+    decision = evaluate_intraday(bars, spec, hourly=hourly, m15=m15, now=bars[-1].time + timedelta(minutes=16))
+    assert decision.draft is not None, decision.log_line
+    assert decision.draft.side == "buy"
+    assert decision.draft.sl < decision.draft.entry < decision.draft.tp
+    assert "15m" in decision.log_line
+    assert "entry: buy" in decision.log_line
+
+

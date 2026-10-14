@@ -9,6 +9,7 @@ from app.market import (
     drop_forming,
     get_market,
     is_no_trade_window,
+    m15_is_fresh,
     m5_is_fresh,
     resample,
     series_is_fresh,
@@ -30,6 +31,10 @@ def test_session_and_five_minute_freshness():
     stale = [Bar(datetime(2026, 9, 28, 11, 40, tzinfo=timezone.utc), 1, 2, 1, 1)]
     assert m5_is_fresh(fresh, now) is True
     assert m5_is_fresh(stale, now) is False
+    assert m15_is_fresh(fresh, now) is True
+    assert m15_is_fresh(stale, now) is True
+    too_old = [Bar(datetime(2026, 9, 28, 11, 20, tzinfo=timezone.utc), 1, 2, 1, 1)]
+    assert m15_is_fresh(too_old, now) is False
 
 
 def test_is_no_trade_window():

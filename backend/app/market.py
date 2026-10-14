@@ -129,6 +129,16 @@ def is_no_trade_window(now: datetime | None = None) -> bool:
     return hour >= 20 or hour < 1
 
 
+def m15_is_fresh(bars: list[Bar], now: datetime | None = None) -> bool:
+    """The last closed 15-minute candle has to be from the last 45 minutes."""
+    if not bars:
+        return False
+    now = _as_utc(now or datetime.now(timezone.utc))
+    last = _as_utc(bars[-1].time)
+    age = now - last
+    return timedelta(0) <= age <= timedelta(minutes=45)
+
+
 def m5_is_fresh(bars: list[Bar], now: datetime | None = None) -> bool:
     """The last closed 5-minute candle has to be from the last quarter hour."""
     if not bars:
@@ -218,23 +228,23 @@ class YahooMarket(MarketData):
             error: str | None = None
 
             if not session_open(now_dt):
-                skip = f"{spec.display}: market is closed, no new 5-minute trade"
+                skip = f"{spec.display}: market is closed, no new 15-minute trade"
             elif is_no_trade_window(now_dt):
                 skip = f"{spec.display}: no-trade window active (9:00 PM - 2:00 AM WAT)"
-            elif not m5:
-                skip = f"{spec.display}: no closed 5-minute candle, so no new trade"
-            elif not m5_is_fresh(m5, now_dt):
-                skip = f"{spec.display}: last 5-minute candle {m5[-1].time.strftime('%H:%M')} UTC is too old to trade"
+            elif not m15:
+                skip = f"{spec.display}: no closed 15-minute candle, so no new trade"
+            elif not m15_is_fresh(m15, now_dt):
+                skip = f"{spec.display}: last 15-minute candle {m15[-1].time.strftime('%H:%M')} UTC is too old to trade"
             else:
                 tradable = True
 
             return FetchResult(
-                m5,
+                m15,
                 label,
                 error=error,
                 hourly=bars_1h,
                 m15=m15,
-                m1=[],
+                m1=m5,
                 tradable=tradable,
                 skip_reason=skip,
             )

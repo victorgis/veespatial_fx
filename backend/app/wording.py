@@ -35,9 +35,9 @@ def rationale(spec: Symbol, side: str, rsi: float) -> str:
     return (
         f"{verb} {spec.display}. The 1-hour trend is an {trend}: price and the 50-hour average "
         f"are on the same side of the 200-hour average, and the 15-minute swings agree. "
-        f"On the last closed 5-minute candle RSI is {rsi:.0f}, inside the pullback band, and MACD momentum "
-        f"is turning with the trend. Price closed back through the 5-minute 50-bar average and is still {held}. "
-        "The stop is beyond that recent swing. The target is 1.8 times the stop distance. "
+        f"On the last closed 15-minute candle RSI is {rsi:.0f}, inside the pullback band, and MACD momentum "
+        f"is turning with the trend. Price closed back through the 15-minute 50-bar average and is still {held}. "
+        "The stop is beyond that recent swing. The target matches the stop distance (1:1). "
         "This is a rules alert, not a promise of profit."
     )
 
@@ -69,7 +69,7 @@ def telegram_message(
     lines = [
         f"{mark} {verb} {spec.display}",
         spec.pair,
-        "5-minute pullback inside the 1-hour trend.",
+        "15-minute pullback inside the 1-hour trend.",
         "",
         f"Entry   {_fmt_price(entry, spec.digits)}",
         f"Stop    {_fmt_price(sl, spec.digits)}",
