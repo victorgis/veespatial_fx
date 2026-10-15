@@ -12,7 +12,7 @@
 #property version   "1.11"
 #property description "Places Signal Desk orders on the XM account this terminal is logged into."
 
-input string ApiBase          = "https://veespatial-fx.onrender.com";
+input string ApiBase          = "https://fx.veespatial.com";
 input string ApiKey           = "";
 input int    PollSeconds      = 10;
 input int    Magic            = 56021;
