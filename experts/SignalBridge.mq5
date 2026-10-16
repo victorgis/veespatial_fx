@@ -13,7 +13,7 @@
 #property description "Places Signal Desk orders on the XM account this terminal is logged into."
 
 input string ApiBase          = "https://fx.veespatial.com";
-input string ApiKey           = "";
+input string ApiKey           = "fxk_qlf8DnLXc2HNNbH0KSI0p1KI_Mut9CtMP1knnf2jXW0";
 input int    PollSeconds      = 10;
 input int    Magic            = 56021;
 input int    SlippagePoints   = 30;
