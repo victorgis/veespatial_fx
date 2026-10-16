@@ -22,18 +22,21 @@ Size is a percent of balance, capped by the maximum lots you set, and never roun
 
 ## What a signal is
 
-A signal is a pullback on the last **closed 5-minute** candle, inside the higher-timeframe trend.
+A signal is an intraday ICWR setup on the last **closed 5-minute** candle.
 
-- The 1-hour trend has to agree. Price and the 50-hour average are on the same side of the 200-hour average. A flat hour produces no trade.
-- The 15-minute swings have to agree: higher highs and higher lows for a buy, lower highs and lower lows for a sell. A mixed swing is allowed only when the latest swing still holds in the trade’s direction.
-- On the 5-minute candle, RSI is in a pullback band and turning (about 40–58 and rising for a buy), MACD momentum is turning with the trend, and price has closed back through the 50-bar average without being extended past it. A fresh 1-minute candle has to close the same way.
-- The stop sits beyond that recent swing, and only when the distance is about 0.8 to 2 times the 5-minute range. The target is 1.8 times the stop.
+- The active wave is the nearest completed swing of at least 40 pips. A smaller swing closer to now is ignored. When a newer swing reaches 40 pips, it replaces the active wave and the old Fibonacci levels are dropped.
+- Fibonacci levels are drawn from the wave low (0) to the wave high (1). The band from 0.382 to 0.618 is the retracement channel. 0.250 and 0.750 are the confirmation levels.
+- The channel has to be entered first: some later candle closes inside it. The signal is the next whole candle beyond a confirmation level. Wholly above 0.750 is a buy. Wholly below 0.250 is a sell. A wick that still touches the level does not count.
+- A new trade also needs the daily 14-period RSI on the same side of 50. Above 50 confirms a buy. Below 50 confirms a sell. RSI at 50 confirms nothing.
+- The stop is 50 pips from the entry. There is no fixed target. An open trade closes when the opposite ICWR signal prints (the daily RSI is not required for that exit) or when the 50-pip stop is hit.
 
-One signal per market at a time. After it closes, the next one on that market waits 15 minutes. An idea that has not hit the stop or the target expires after 6 hours.
+One signal per market at a time. The opposite signal closes the open trade, and if the daily RSI agrees with the new direction the desk reverses on that same candle. A trade does not expire on a timer.
 
-Every signal is posted to Telegram as soon as it appears. Automatic accounts do not take all of them. Three open automatic trades is the usual limit, and five is the most. Anything past that stays on Telegram and on the desk for a manual entry. The service log prints one line per market on every scan, with the 1-hour trend, RSI, MA50, EMA200, MACD, and the 15-minute structure, whether or not a trade is taken.
+Forex uses the pair's own pip, so 40 pips on USDJPY is 0.40. Gold, oil, indices, and the other non-forex markets have no pip in these rules. On those markets one pip is 0.01% of price, so 40 pips is 0.40% of price and the stop is 0.50% of price.
 
-Prices come from Yahoo Finance. A forex order is skipped if the broker price has already run more than 40% of the way to the stop. Gold, silver, WTI, Brent, natural gas, copper, and soybeans are filled at the MT5 price. The stop and target keep the signal's distance, and that distance is rescaled when the broker quotes a different unit, such as soybeans in dollars instead of cents.
+Every signal is posted to Telegram as soon as it appears. Automatic accounts do not take all of them. Three open automatic trades is the usual limit, and five is the most. Anything past that stays on Telegram and on the desk for a manual entry. The service log prints one line per market on every scan, with the active wave, the daily RSI, and why a trade was or was not taken.
+
+Prices come from Yahoo Finance. A forex order is skipped if the broker price has already run more than 40% of the way to the stop. Gold, silver, WTI, Brent, natural gas, copper, and soybeans are filled at the MT5 price. The stop keeps the signal's distance, and that distance is rescaled when the broker quotes a different unit, such as soybeans in dollars instead of cents. The copier places the stop and no take profit, then closes the position when the opposite signal prints. Download SignalBridge again so an older copier, which still attached a target, is replaced.
 
 This is a rules alert. It is not a promise of profit, and it is not a measured win rate. A stop can be skipped in a fast market.
 

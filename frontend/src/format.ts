@@ -48,6 +48,12 @@ export function deliveryLabel(status: string | null): string {
       return "Turned off for you";
     case "capped":
       return "At your open-trade limit";
+    case "close_queued":
+      return "Closing on your platform";
+    case "closed":
+      return "Closed on your platform";
+    case "cancelled":
+      return "Not sent";
     default:
       return status || "Open";
   }
@@ -65,6 +71,8 @@ export function outcomeLabel(status: string): string {
       return "Breakeven (SL at entry)";
     case "expired":
       return "Expired";
+    case "exit":
+      return "Closed on the opposite signal";
     default:
       return status;
   }

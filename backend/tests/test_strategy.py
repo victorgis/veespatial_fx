@@ -7,7 +7,6 @@ from app.strategy import (
     bar_hit,
     decide,
     ema,
-    evaluate_intraday,
     levels,
     macd,
     rsi,
@@ -15,7 +14,6 @@ from app.strategy import (
     structure_allows,
     structure_of,
 )
-from app.symbols import get_symbol
 
 
 def test_ema_of_a_flat_series_is_the_price():
@@ -62,6 +60,8 @@ def test_stop_wins_when_both_print_in_one_candle():
     assert bar_hit("sell", 12, 8, high=13, low=9) == "stopped"
     assert bar_hit("sell", 12, 8, high=11, low=7) == "target"
     assert bar_hit("buy", 9, 12, high=11, low=10) is None
+    assert bar_hit("buy", 9, 0, high=13, low=10) is None
+    assert bar_hit("sell", 12, 0, high=11, low=7) is None
 
 
 def test_macd_of_a_rising_series_is_positive():
@@ -105,182 +105,3 @@ def test_stop_widens_a_tiny_swing_and_skips_a_huge_one():
     tight = stop_distance("buy", 1.10, 1.0999, 0.001, 0.0001)
     assert tight is not None and abs(tight - 0.0015) < 1e-9
     assert stop_distance("buy", 1.10, 1.090, 0.001, 0.0001) is None
-
-
-def _five_minute_pullback() -> tuple[list[Bar], list[Bar], list[Bar]]:
-    """A rising 5-minute series that tags the 50-bar average and closes back above it."""
-    start = datetime(2026, 3, 2, 8, tzinfo=timezone.utc)
-    bars: list[Bar] = []
-    price = 1.10
-    for i in range(120):
-        price += -0.00003 if i % 5 == 4 else 0.0001
-        prev = bars[-1].close if bars else price
-        when = start + timedelta(minutes=5 * len(bars))
-        bars.append(Bar(when, prev, max(prev, price) + 0.00008, min(prev, price) - 0.00008, price))
-    from app.strategy import atr
-
-    for _ in range(12):
-        average = ema([bar.close for bar in bars], 50)[-1]
-        width = atr(bars, 14)[-1]
-        assert average is not None and width is not None
-        if bars[-1].close - average < width * 0.6:
-            break
-        price = bars[-1].close - 0.00025
-        prev = bars[-1].close
-        when = start + timedelta(minutes=5 * len(bars))
-        bars.append(Bar(when, prev, max(prev, price) + 0.00008, min(prev, price) - 0.00008, price))
-    price = bars[-1].close + 0.00030
-    prev = bars[-1].close
-    when = start + timedelta(minutes=5 * len(bars))
-    bars.append(Bar(when, prev, max(prev, price) + 0.00005, min(prev, price) - 0.00005, price))
-
-    hourly: list[Bar] = []
-    level = bars[-1].close - 0.04
-    for i in range(230):
-        level += 0.04 / 230
-        hourly.append(
-            Bar(start + timedelta(hours=i), level - 0.0002, level + 0.0003, level - 0.0003, level)
-        )
-    floor = bars[-1].close - 0.02
-    m15 = []
-    for i in range(40):
-        mid = floor + 0.006
-        m15.append(Bar(start + timedelta(minutes=15 * i), mid, floor + 0.008, floor + 0.004, mid))
-    swings = {
-        6: (floor, floor + 0.006, floor + 0.003),
-        10: (floor + 0.006, floor + 0.014, floor + 0.012),
-        16: (floor + 0.003, floor + 0.008, floor + 0.005),
-        20: (floor + 0.008, floor + 0.018, floor + 0.016),
-        26: (floor + 0.005, floor + 0.010, floor + 0.008),
-        30: (floor + 0.010, floor + 0.020, floor + 0.018),
-    }
-    for index, (lo, hi, close) in swings.items():
-        m15[index] = Bar(m15[index].time, close, hi, lo, close)
-    return bars, hourly, m15
-
-
-def test_five_minute_pullback_publishes_inside_the_hour_trend():
-    spec = get_symbol("eurusd")
-    assert spec is not None
-    bars, hourly, m15 = _five_minute_pullback()
-    decision = evaluate_intraday(bars, spec, hourly=hourly, m15=m15, now=bars[-1].time + timedelta(minutes=6))
-    assert decision.draft is not None, decision.log_line
-    assert decision.draft.side == "buy"
-    assert decision.draft.sl < decision.draft.entry < decision.draft.tp
-    reward = decision.draft.tp - decision.draft.entry
-    risk = decision.draft.entry - decision.draft.sl
-    assert abs(reward / risk - 1.0) < 0.05
-    for word in ("RSI", "MACD", "MA50", "EMA200", "15m", "entry: buy"):
-        assert word in decision.log_line
-
-
-def test_opposing_fifteen_minute_structure_blocks_the_pullback():
-    spec = get_symbol("eurusd")
-    assert spec is not None
-    bars, hourly, m15 = _five_minute_pullback()
-    flipped = []
-    for bar in m15:
-        mid = (bar.high + bar.low) / 2
-        flipped.append(Bar(bar.time, mid, 2.2 - bar.low, 2.2 - bar.high, mid))
-    decision = evaluate_intraday(bars, spec, hourly=hourly, m15=flipped, now=bars[-1].time + timedelta(minutes=6))
-    assert decision.draft is None
-    assert "15-minute structure" in decision.log_line
-
-
-def test_a_fresh_one_minute_bar_against_the_trade_blocks_it():
-    spec = get_symbol("eurusd")
-    assert spec is not None
-    bars, hourly, m15 = _five_minute_pullback()
-    last = bars[-1]
-    minute = Bar(last.time + timedelta(minutes=4), last.close, last.close + 0.0001, last.close - 0.0002, last.close - 0.0001)
-    decision = evaluate_intraday(
-        bars,
-        spec,
-        hourly=hourly,
-        m15=m15,
-        m1=[minute],
-        now=minute.time + timedelta(seconds=30),
-    )
-    assert decision.draft is None
-    assert "1-minute" in decision.log_line
-
-
-def test_short_history_still_names_every_check():
-    spec = get_symbol("eurusd")
-    assert spec is not None
-    when = datetime(2026, 3, 2, 12, 5, tzinfo=timezone.utc)
-    decision = evaluate_intraday([Bar(when, 1.1, 1.11, 1.09, 1.1)], spec)
-    assert decision.draft is None
-    for word in ("RSI", "MACD", "MA50", "EMA200", "15m"):
-        assert word in decision.log_line
-
-
-def test_multi_timeframe_trend_conflict():
-    from app.strategy import _4h_bias, _1d_bias
-    spec = get_symbol("eurusd")
-    assert spec is not None
-    bars, hourly, m15 = _five_minute_pullback()
-    # Test 4H bias calculation
-    bias_4h = _4h_bias(hourly, bars[-1].close)
-    assert bias_4h in ("buy", "sell", "flat", None)
-
-
-def test_fifteen_minute_pullback_publishes_inside_the_hour_trend():
-    spec = get_symbol("eurusd")
-    assert spec is not None
-    start = datetime(2026, 3, 2, 8, tzinfo=timezone.utc)
-    bars: list[Bar] = []
-    price = 1.10
-    for i in range(120):
-        price += -0.00003 if i % 5 == 4 else 0.0001
-        prev = bars[-1].close if bars else price
-        when = start + timedelta(minutes=15 * len(bars))
-        bars.append(Bar(when, prev, max(prev, price) + 0.00008, min(prev, price) - 0.00008, price))
-    from app.strategy import atr
-
-    for _ in range(12):
-        average = ema([bar.close for bar in bars], 50)[-1]
-        width = atr(bars, 14)[-1]
-        assert average is not None and width is not None
-        if bars[-1].close - average < width * 0.6:
-            break
-        price = bars[-1].close - 0.00025
-        prev = bars[-1].close
-        when = start + timedelta(minutes=15 * len(bars))
-        bars.append(Bar(when, prev, max(prev, price) + 0.00008, min(prev, price) - 0.00008, price))
-    price = bars[-1].close + 0.00030
-    prev = bars[-1].close
-    when = start + timedelta(minutes=15 * len(bars))
-    bars.append(Bar(when, prev, max(prev, price) + 0.00005, min(prev, price) - 0.00005, price))
-
-    hourly: list[Bar] = []
-    level = bars[-1].close - 0.04
-    for i in range(230):
-        level += 0.04 / 230
-        hourly.append(
-            Bar(start + timedelta(hours=i), level - 0.0002, level + 0.0003, level - 0.0003, level)
-        )
-    floor = bars[-1].close - 0.02
-    m15 = []
-    for i in range(40):
-        mid = floor + 0.006
-        m15.append(Bar(start + timedelta(minutes=15 * i), mid, floor + 0.008, floor + 0.004, mid))
-    swings = {
-        6: (floor, floor + 0.006, floor + 0.003),
-        10: (floor + 0.006, floor + 0.014, floor + 0.012),
-        16: (floor + 0.003, floor + 0.008, floor + 0.005),
-        20: (floor + 0.008, floor + 0.018, floor + 0.016),
-        26: (floor + 0.005, floor + 0.010, floor + 0.008),
-        30: (floor + 0.010, floor + 0.020, floor + 0.018),
-    }
-    for index, (lo, hi, close) in swings.items():
-        m15[index] = Bar(m15[index].time, close, hi, lo, close)
-
-    decision = evaluate_intraday(bars, spec, hourly=hourly, m15=m15, now=bars[-1].time + timedelta(minutes=16))
-    assert decision.draft is not None, decision.log_line
-    assert decision.draft.side == "buy"
-    assert decision.draft.sl < decision.draft.entry < decision.draft.tp
-    assert "15m" in decision.log_line
-    assert "entry: buy" in decision.log_line
-
-

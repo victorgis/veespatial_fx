@@ -86,6 +86,13 @@ def test_rebase_keeps_the_stop_distance_when_the_cash_price_differs():
     assert tp - entry == pytest.approx(0.50)
 
 
+def test_rebase_keeps_a_missing_target_at_zero():
+    entry, sl, tp = rebase_levels("buy", 1.10, 1.095, 0.0, 1.1002, 1.1004)
+    assert entry == pytest.approx(1.1004)
+    assert entry - sl == pytest.approx(0.005)
+    assert tp == 0.0
+
+
 def test_rebase_scales_soybeans_from_cents_onto_dollars():
     entry, sl, tp = rebase_levels("sell", 1050.0, 1058.0, 1042.0, 10.52, 10.55)
     assert entry == pytest.approx(10.52)

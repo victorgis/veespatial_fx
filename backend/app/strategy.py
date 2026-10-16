@@ -1,15 +1,7 @@
-"""Signal rules.
+"""Indicator helpers and the older hourly cross.
 
-The desk publishes a 15-minute pullback inside a higher-timeframe trend.
-The 1-hour chart has to agree (price and the 50-hour average on the same
-side of the 200-hour average). The 4-hour trend has to agree, or at
-least not contradict. The 15-minute candle times the entry: RSI in a
-pullback band and turning, MACD momentum turning with the trend, and the
-close back through the 50-bar average without being extended. The stop sits
-beyond the recent 15-minute swing. The target is 1:1 matching the stop distance.
-
-`decide`, `levels`, and `evaluate` are the older hourly cross. They stay so
-their tests stay, and the scan does not call them.
+The live rules are the intraday ICWR strategy in `app.icwr`. The scan calls
+that. `decide`, `levels`, and `evaluate` stay so their tests stay.
 """
 
 from __future__ import annotations
@@ -243,16 +235,19 @@ def evaluate(bars: list[Bar], spec: Symbol, params: StrategyParams | None = None
 
 
 def bar_hit(side: str, sl: float, tp: float, high: float, low: float) -> str | None:
-    """If both the stop and the target print in one candle, the stop wins."""
+    """If both the stop and the target print in one candle, the stop wins.
+
+    A target of 0 means the trade has no fixed target, which is the ICWR rule.
+    """
     if side == "buy":
         if low <= sl:
             return "stopped"
-        if high >= tp:
+        if tp > 0 and high >= tp:
             return "target"
         return None
     if high >= sl:
         return "stopped"
-    if low <= tp:
+    if tp > 0 and low <= tp:
         return "target"
     return None
 
@@ -646,158 +641,7 @@ def evaluate_intraday(
     m1: list[Bar] | None = None,
     now: datetime | None = None,
 ) -> Decision:
-    """Judge the last closed 15-minute candle. Always returns a log line."""
-    tuned = _intraday_params(params)
-    now = now or datetime.now(timezone.utc)
-    when = bars[-1].time if bars else None
-    need = max(tuned.ma50, tuned.macd_slow + tuned.macd_signal, tuned.rsi_n, tuned.atr_n) + 2
-    if len(bars) < need:
-        line = _check_line(
-            spec.display, when, "1h waiting", "—", "—", "—", "—", "—",
-            f"no entry: need {need} closed 15-minute candles (have {len(bars)})",
-        )
-        return Decision(None, line)
+    """Intraday ICWR. Kept under the old name so existing callers stay pointed at the live rules."""
+    from app.icwr import evaluate
 
-    closes = [bar.close for bar in bars]
-    ma50 = ema(closes, tuned.ma50)
-    rsi_v = rsi(closes, tuned.rsi_n)
-    atr_v = atr(bars, tuned.atr_n)
-    macd_line, macd_sig, macd_hist = macd(closes, tuned.macd_fast, tuned.macd_slow, tuned.macd_signal)
-    i = len(bars) - 1
-    cur_ma = ma50[i]
-    prev_ma = ma50[i - 1]
-    cur_rsi = rsi_v[i]
-    prev_rsi = rsi_v[i - 1]
-    cur_atr = atr_v[i]
-    cur_hist = macd_hist[i]
-    prev_hist = macd_hist[i - 1]
-    cur_macd = macd_line[i]
-    cur_sig = macd_sig[i]
-    rsi_txt = _rsi_txt(cur_rsi, prev_rsi)
-    macd_txt = _macd_txt(cur_hist, prev_hist, cur_macd, cur_sig)
-    if cur_ma is None:
-        ma_txt = "—"
-    elif closes[i] > cur_ma:
-        ma_txt = "close above"
-    elif closes[i] < cur_ma:
-        ma_txt = "close below"
-    else:
-        ma_txt = "close on"
-
-    if None in (cur_ma, prev_ma, cur_rsi, prev_rsi, cur_atr, cur_hist, prev_hist, cur_macd, cur_sig):
-        line = _check_line(
-            spec.display, when, "1h waiting", rsi_txt, ma_txt, "—", macd_txt, "—",
-            "no entry: 15-minute averages are not ready",
-        )
-        return Decision(None, line)
-    assert cur_ma is not None and cur_rsi is not None and prev_rsi is not None
-    assert cur_atr is not None and cur_hist is not None and prev_hist is not None
-    assert cur_macd is not None and cur_sig is not None
-
-    if cur_atr <= 0 or cur_atr > closes[i] * 0.15:
-        line = _check_line(
-            spec.display, when, "1h waiting", rsi_txt, ma_txt, "—", macd_txt, "—",
-            "no entry: the 15-minute range is not usable",
-        )
-        return Decision(None, line)
-
-    bias_1h, ema_txt = _hourly_bias(hourly, closes[i], tuned)
-    b4h = _4h_bias(hourly, closes[i])
-    b1d = _1d_bias(hourly, closes[i])
-
-    bias = bias_1h
-    trend_conflict: str | None = None
-
-    if bias_1h is not None:
-        if b4h is not None and b4h != "flat" and b4h != bias_1h:
-            bias = None
-            trend_conflict = f"no entry: 4-hour trend ({b4h}) conflicts with 1-hour trend ({bias_1h})"
-        elif b1d is not None and b1d != "flat" and b1d != bias_1h:
-            bias = None
-            trend_conflict = f"no entry: 1-day trend ({b1d}) conflicts with 1-hour trend ({bias_1h})"
-
-    if not hourly or len(hourly) < tuned.ema_trend:
-        trend_txt = "1h not ready"
-    elif bias == "buy":
-        trend_txt = "1h/4h uptrend" if b4h == "buy" else "1h uptrend"
-    elif bias == "sell":
-        trend_txt = "1h/4h downtrend" if b4h == "sell" else "1h downtrend"
-    else:
-        trend_txt = "1h flat"
-
-    structure_source = m15 if (m15 and len(m15) >= 10) else bars
-    structure = structure_of(structure_source, tuned.swing_wing)
-    struct_txt = structure.label
-
-    def finish(verdict: str, draft: SignalDraft | None = None) -> Decision:
-        return Decision(
-            draft,
-            _check_line(spec.display, when, trend_txt, rsi_txt, ma_txt, ema_txt, macd_txt, struct_txt, verdict),
-        )
-
-    if trend_txt == "1h not ready":
-        return finish("no entry: 1-hour trend is not ready")
-    if trend_conflict is not None:
-        return finish(trend_conflict)
-    if bias is None:
-        return finish("no entry: 1-hour trend is flat")
-    side = bias
-    if not structure_allows(structure, side):
-        return finish(f"no entry: 15-minute structure is {structure.label}")
-
-    # 15m Liquidity Sweep Filter
-    # if not _swept_liquidity(bars, side):
-    #     return finish("no entry: price has not swept 20-bar liquidity")
-
-    lo, hi = tuned.buy_rsi if side == "buy" else tuned.sell_rsi
-    if not (lo <= cur_rsi <= hi):
-        return finish(f"no entry: RSI {cur_rsi:.0f} is outside {lo:.0f}-{hi:.0f}")
-    if side == "buy" and cur_rsi <= prev_rsi:
-        return finish("no entry: RSI is not rising")
-    if side == "sell" and cur_rsi >= prev_rsi:
-        return finish("no entry: RSI is not falling")
-
-    # The turn often prints while the line is still the other side of the signal.
-    # What matters is the histogram turning with the trend. The log still names
-    # whether the line is above or below the signal.
-    hist_with = (cur_hist > prev_hist) if side == "buy" else (cur_hist < prev_hist)
-    if not hist_with:
-        return finish("no entry: MACD momentum is not with the trend")
-
-    touch = max(spec.pip, cur_atr * 0.15)
-    prev_close = closes[i - 1]
-    bar = bars[i]
-    if side == "buy":
-        reclaimed = bar.close > cur_ma and (bar.low <= cur_ma + touch or prev_close <= cur_ma)
-    else:
-        reclaimed = bar.close < cur_ma and (bar.high >= cur_ma - touch or prev_close >= cur_ma)
-    if not reclaimed:
-        return finish("no entry: price has not closed back through MA50")
-    if abs(bar.close - cur_ma) > cur_atr * 1.25:
-        return finish("no entry: price is extended beyond MA50")
-
-    if side == "buy":
-        if structure.last_low is None or bar.close <= structure.last_low:
-            return finish("no entry: demand has not held")
-    else:
-        if structure.last_high is None or bar.close >= structure.last_high:
-            return finish("no entry: supply has not held")
-    swing = _recent_swing(bars, side, tuned.swing_wing)
-
-    if not _minute_confirms(side, m1, now):
-        return finish("no entry: the 1-minute candle does not confirm")
-
-    entry = round_price(bar.close, spec.digits)
-    distance = stop_distance(side, entry, swing, cur_atr, spec.pip, tuned)
-    if distance is None:
-        raw = entry - swing if side == "buy" else swing - entry
-        if raw > cur_atr * tuned.max_stop_atr:
-            return finish("no entry: the stop would be wider than 2 times the 15-minute range")
-        return finish("no entry: the swing does not give a stop")
-    target_r = tuned.target_r
-    built = _levels_r(side, entry, distance, spec.digits, target_r)
-    if built is None:
-        return finish("no entry: the stop rounded onto the entry")
-    sl, tp = built
-    draft = SignalDraft(side, entry, sl, tp, cur_atr, cur_rsi, bar.time)
-    return finish(f"entry: {side}, stop beyond the swing, target {target_r:g} times the stop (1:1)", draft)
+    return evaluate(bars, spec, params, hourly=hourly, m15=m15, m1=m1, now=now)

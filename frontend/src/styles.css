@@ -280,6 +280,10 @@ ol.guide li { margin: 8px 0; }
   background: linear-gradient(135deg, rgba(42, 36, 24, 0.95), rgba(30, 27, 22, 0.95));
 }
 
+.toast-card.toast-exit {
+  border-left-color: var(--brass);
+  background: linear-gradient(135deg, rgba(42, 36, 24, 0.95), rgba(30, 27, 22, 0.95));
+}
 .toast-card.toast-tp {
   border-left-color: #4ade80;
   background: linear-gradient(135deg, rgba(20, 45, 30, 0.95), rgba(30, 27, 22, 0.95));

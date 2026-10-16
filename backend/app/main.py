@@ -50,6 +50,12 @@ async def lifespan(_app: FastAPI):
             "The Render disk is wiped on redeploy, and a scan can lock the file."
         )
     init_db()
+    try:
+        from app.purge import clear_trading_data
+
+        clear_trading_data()
+    except Exception:
+        log.exception("trading data purge failed")
     scheduler = None
     if cfg.scheduler_enabled:
         from app.scheduler import start_scheduler

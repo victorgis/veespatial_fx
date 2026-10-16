@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
 
@@ -12,8 +12,9 @@ from app.config import get_settings
 from app.database import session_scope
 from app.market import get_market
 from app.models import BotConfig, Delivery, LastPrice, ScanRun, Settings, Signal, User, utcnow
-from app.strategy import SignalDraft, StrategyParams, bar_hit
-from app.strategy import evaluate_intraday as evaluate
+from app.icwr import evaluate
+from app.purge import clear_trading_data
+from app.strategy import SignalDraft, StrategyParams, bar_hit, round_price
 from app.symbols import get_symbol
 from app.telegram_svc import send as telegram_send
 from app.wording import rationale, telegram_message
@@ -88,12 +89,34 @@ def _delivery_status(user_settings: Settings, spec_id: str, spec_mt5_only: bool,
     return "queued", "Waiting for your platform."
 
 
-def _split_decision(checked: object) -> tuple[SignalDraft | None, str | None]:
+def _split_decision(checked: object) -> tuple[SignalDraft | None, str | None, str | None]:
     if isinstance(checked, SignalDraft):
-        return checked, None
+        return checked, None, checked.side
     if checked is None:
-        return None, None
-    return getattr(checked, "draft", None), getattr(checked, "log_line", None)
+        return None, None, None
+    draft = getattr(checked, "draft", None)
+    side = getattr(checked, "signal_side", None)
+    if side is None and draft is not None:
+        side = draft.side
+    return draft, getattr(checked, "log_line", None), side
+
+
+def _close_on_opposite(db, signal: Signal, price: float, now: datetime) -> None:  # type: ignore[no-untyped-def]
+    """The opposite ICWR signal closes the idea. A filled copier order is told to flatten."""
+    signal.status = "exit"
+    signal.close_price = price
+    signal.closed_at = now
+    signal.close_telegram_sent = True
+    rows = db.query(Delivery).filter(Delivery.signal_id == signal.id).all()
+    for delivery in rows:
+        if delivery.status in ("placed", "dispatched"):
+            delivery.status = "close_queued"
+            delivery.message = "Close this trade. The opposite ICWR signal printed."
+            delivery.updated_at = now
+        elif delivery.status in ("queued", "paused"):
+            delivery.status = "cancelled"
+            delivery.message = "Not sent. The opposite ICWR signal closed the idea first."
+            delivery.updated_at = now
 
 
 def _announce(db, spec, signal: Signal) -> bool:  # type: ignore[no-untyped-def]
@@ -119,6 +142,13 @@ def _announce(db, spec, signal: Signal) -> bool:  # type: ignore[no-untyped-def]
 
 
 def _resolve(signal: Signal, bars, now: datetime, expiry_hours: int) -> tuple[str, float] | None:
+    """Close on the 50-pip stop. ICWR has no target and no time expiry.
+
+    `expiry_hours` is accepted so an old setting does not have to be threaded
+    out of the caller. The intraday rules keep the trade until the stop or the
+    opposite signal.
+    """
+    del now, expiry_hours
     future = []
     for bar in bars:
         t = bar.time if bar.time.tzinfo else bar.time.replace(tzinfo=timezone.utc)
@@ -126,24 +156,16 @@ def _resolve(signal: Signal, bars, now: datetime, expiry_hours: int) -> tuple[st
             future.append(bar)
 
     current_sl = signal.sl
-
     for bar in future:
-        if signal.side == "buy":
-            if bar.low <= current_sl:
+        hit = bar_hit(signal.side, current_sl, signal.tp, bar.high, bar.low)
+        if hit == "stopped":
+            if signal.side == "buy":
                 outcome = "breakeven" if current_sl >= signal.entry else "stopped"
-                return outcome, current_sl
-            if bar.high >= signal.tp:
-                return "target", signal.tp
-        else:
-            if bar.high >= current_sl:
+            else:
                 outcome = "breakeven" if current_sl <= signal.entry else "stopped"
-                return outcome, current_sl
-            if bar.low <= signal.tp:
-                return "target", signal.tp
-
-    age = now - (signal.candle_time if signal.candle_time.tzinfo else signal.candle_time.replace(tzinfo=timezone.utc))
-    if age > timedelta(hours=expiry_hours) and bars:
-        return "expired", bars[-1].close
+            return outcome, current_sl
+        if hit == "target":
+            return "target", signal.tp
     return None
 
 
@@ -180,6 +202,10 @@ def _run() -> dict:
     cfg = get_settings()
     now = utcnow()
     created = 0
+    try:
+        clear_trading_data(now)
+    except Exception:
+        log.exception("trading data purge failed")
     db = session_scope()
     try:
         ids = _watched_ids(db)
@@ -202,7 +228,7 @@ def _run() -> dict:
             fetched[symbol_id] = result
             if result.bars:
                 log.info(
-                    "%s: %s closed 15-minute candles through %s UTC",
+                    "%s: %s closed 5-minute candles through %s UTC",
                     spec.display,
                     len(result.bars),
                     result.bars[-1].time.strftime("%H:%M"),
@@ -275,19 +301,22 @@ def _run() -> dict:
             if not result.tradable:
                 if still is not None and not still.telegram_sent:
                     still.telegram_sent = _announce(db, spec, still)
-                log.info("%s: %s", spec.display, result.skip_reason or "no new 15-minute trade")
+                log.info("%s: %s", spec.display, result.skip_reason or "no new 5-minute trade")
                 continue
             checked = evaluate(
                 result.bars,
                 spec,
                 params,
                 hourly=result.hourly,
-                m15=result.m15,
-                m1=result.m1,
             )
-            draft, note = _split_decision(checked)
+            draft, note, signal_side = _split_decision(checked)
             if note:
                 log.info("%s", note)
+            if still is not None and signal_side and signal_side != still.side:
+                _close_on_opposite(db, still, round_price(result.bars[-1].close, spec.digits), now)
+                log.info("%s: closed the open %s on the opposite ICWR signal", spec.display, still.side)
+                db.flush()
+                still = None
             if still is not None:
                 if not still.telegram_sent:
                     still.telegram_sent = _announce(db, spec, still)
@@ -296,21 +325,6 @@ def _run() -> dict:
             if draft is None:
                 continue
 
-            recent = (
-                db.query(Signal)
-                .filter(Signal.symbol_id == symbol_id)
-                .order_by(Signal.candle_time.desc())
-                .first()
-            )
-            if recent is not None:
-                gap = draft.candle_time - recent.candle_time
-                if gap < timedelta(minutes=cfg.min_minutes_between):
-                    log.info(
-                        "%s: not taken, %s minutes since the last signal on this market",
-                        spec.display,
-                        cfg.min_minutes_between,
-                    )
-                    continue
             signal = Signal(
                 symbol_id=spec.id,
                 side=draft.side,

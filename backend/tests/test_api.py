@@ -419,16 +419,21 @@ def test_order_formatter_and_copier_files():
         "auto",
         "micro",
         "",
-        [OrderOut(4, "sell", ["BRENTCash", "BRENTCash#"], 80, 82, 76, 0.5, 0.5, "fx4")],
+        [
+            OrderOut(4, "sell", ["BRENTCash", "BRENTCash#"], 80, 82, 76, 0.5, 0.5, "fx4"),
+            OrderOut(9, "close", ["EURUSD"], 0, 0, 0, 0, 0, "fx9"),
+        ],
     )
     assert text.splitlines()[0] == "mode=auto"
     assert "BRENTCash" in text
+    assert "close|9|fx9" in text.splitlines()
     from app.routers.system import experts_dir
 
     folder = experts_dir()
     for name in ("SignalBridge.mq5", "SignalBridge.mq4"):
         source = (folder / name).read_text()
         assert "WebRequest" in source
+        assert "close|" in source
         assert "X-Api-Key" in name or "X-Api-Key" in source
 
 

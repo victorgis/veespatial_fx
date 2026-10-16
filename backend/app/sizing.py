@@ -95,6 +95,9 @@ def rebase_levels(
     if anchor <= 0 or entry <= 0:
         return entry, sl, tp
     scale = quote_scale(entry, anchor)
+    # ICWR has no fixed target. A zero target stays zero on the broker quote.
+    if tp == 0:
+        return anchor, anchor + (sl - entry) * scale, 0.0
     return anchor, anchor + (sl - entry) * scale, anchor + (tp - entry) * scale
 
 

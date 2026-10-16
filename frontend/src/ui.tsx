@@ -17,7 +17,7 @@ export function Prices({ signal }: { signal: Signal }) {
     <div className="prices">
       <div className="price"><span>Entry</span><b>{price(signal.entry, signal.digits)}</b></div>
       <div className="price"><span>Stop</span><b>{price(signal.sl, signal.digits)}</b></div>
-      <div className="price"><span>Target</span><b>{price(signal.tp, signal.digits)}</b></div>
+      <div className="price"><span>Target</span><b>{signal.tp > 0 ? price(signal.tp, signal.digits) : "Opposite signal"}</b></div>
     </div>
   );
 }

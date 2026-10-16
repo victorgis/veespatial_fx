@@ -30,14 +30,14 @@ def mismatch_message(selected: str, detected: str, fx_symbol: str | None, fx_con
 
 def rationale(spec: Symbol, side: str, rsi: float) -> str:
     verb = "Buy" if side == "buy" else "Sell"
-    trend = "uptrend" if side == "buy" else "downtrend"
-    held = "above the last 15-minute swing low" if side == "buy" else "below the last 15-minute swing high"
+    bias = "above 50, so the day is bullish" if side == "buy" else "below 50, so the day is bearish"
+    level = "75% confirmation level" if side == "buy" else "25% confirmation level"
     return (
-        f"{verb} {spec.display}. The 1-hour trend is an {trend}: price and the 50-hour average "
-        f"are on the same side of the 200-hour average, and the 15-minute swings agree. "
-        f"On the last closed 15-minute candle RSI is {rsi:.0f}, inside the pullback band, and MACD momentum "
-        f"is turning with the trend. Price closed back through the 15-minute 50-bar average and is still {held}. "
-        "The stop is beyond that recent swing. The target matches the stop distance (1:1). "
+        f"{verb} {spec.display}. On the 5-minute chart the nearest swing of at least 40 pips is the active wave. "
+        f"Price closed inside its 38.2–61.8 retracement channel, then a whole candle closed beyond the {level}. "
+        f"That is an ICWR {'bullish' if side == 'buy' else 'bearish'} signal. "
+        f"The daily 14-period RSI is {rsi:.0f}, {bias}. "
+        "The stop is 50 pips from the entry. There is no fixed target: the trade exits on the opposite ICWR signal, or at the stop. "
         "This is a rules alert, not a promise of profit."
     )
 
@@ -69,11 +69,11 @@ def telegram_message(
     lines = [
         f"{mark} {verb} {spec.display}",
         spec.pair,
-        "15-minute pullback inside the 1-hour trend.",
+        "Intraday ICWR. 5-minute wave, confirmed by the daily RSI.",
         "",
         f"Entry   {_fmt_price(entry, spec.digits)}",
         f"Stop    {_fmt_price(sl, spec.digits)}",
-        f"Target  {_fmt_price(tp, spec.digits)}",
+        "Target  none. Exit on the opposite ICWR signal." if tp == 0 else f"Target  {_fmt_price(tp, spec.digits)}",
         "",
         f"Size for {risk_percent:g}% risk on {balance:,.0f}",
     ]
@@ -97,7 +97,7 @@ def telegram_message(
         "",
         "Your dashboard shows the size for your own balance.",
         "Automatic accounts place this when MT4 or MT5 is connected and the account type matches.",
-        "Signals only: place it yourself, then set this stop and target.",
+        "Signals only: place it yourself, then set this stop. Close it when the opposite signal prints.",
         "",
         f"Signal {signal_id}. A rules alert, not a promise of profit. You can lose money.",
     ]
@@ -111,6 +111,8 @@ def close_message(spec: Symbol, side: str, outcome: str, price: float | None) ->
         return f"{spec.display} {verb} reached the target at {px}."
     if outcome == "stopped":
         return f"{spec.display} {verb} hit the stop at {px}."
+    if outcome == "exit":
+        return f"{spec.display} {verb} closed on the opposite ICWR signal at {px}."
     return f"{spec.display} {verb} expired without stop or target. The idea is closed."
 
 
@@ -132,7 +134,9 @@ def copy_text(
         f"{verb} {spec.display}",
         f"Entry: {_fmt_price(entry, spec.digits)}",
         f"Stop loss: {_fmt_price(sl, spec.digits)}",
-        f"Take profit: {_fmt_price(tp, spec.digits)}",
+        "Take profit: none. Exit when the opposite ICWR signal prints."
+        if tp == 0
+        else f"Take profit: {_fmt_price(tp, spec.digits)}",
     ]
     if quote_lots is not None:
         label = "Micro" if account_type == "micro" else "Standard"

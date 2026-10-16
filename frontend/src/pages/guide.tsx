@@ -80,7 +80,7 @@ export function Guide() {
         <article className="card">
           <h2>Place a signal by hand</h2>
           <ol className="guide">
-            <li>Read the entry, stop, target, and the lot size for your account type. Copy levels puts them on the clipboard.</li>
+            <li>Read the entry, the 50-pip stop, and the lot size for your account type. Copy levels puts them on the clipboard. There is no take profit.</li>
             <li>On a standard account, 1 forex lot is 100,000. On a micro account it is 1,000, so the lot number is 100 times larger for the same position.</li>
             <li>For gold, XM uses the same 100× relationship (100 ounces versus 1 ounce). For OILCash and BRENTCash, 1 lot is 100 barrels on both.</li>
             <li>If the card says the minimum lot would risk more than your limit, skip the trade.</li>
@@ -89,23 +89,25 @@ export function Guide() {
         <article className="card">
           <h2>How a signal is chosen</h2>
           <p>
-            A signal is a 5-minute pullback inside the current trend. The 1-hour chart has to agree: price and the
-            50-hour average on the same side of the 200-hour average. The 15-minute swings have to make higher highs
-            and higher lows for a buy, or the mirror for a sell. On the 5-minute candle, RSI sits in a pullback band
-            and is turning, MACD momentum is turning with the trend, and price has closed back through the 50-bar
-            average without running away from it. The stop is beyond that recent swing. The target is 1.8 times as
-            far as the stop. A fresh 1-minute candle has to close the same way.
+            A signal follows the intraday ICWR rules on the 5-minute chart. The active wave is the nearest
+            completed swing of at least 40 pips. Fibonacci levels run from that wave’s low to its high. After a
+            candle closes inside the 38.2–61.8 retracement channel, a whole candle beyond the 75% level is a buy
+            and a whole candle beyond the 25% level is a sell. A wick that still touches the level is not a signal.
+            The daily 14-period RSI has to be above 50 for a buy and below 50 for a sell. The stop is 50 pips.
+            There is no take profit. The trade closes when the opposite ICWR signal prints, or when the stop is hit.
           </p>
           <p>
             Every signal is posted to Telegram as soon as the candle closes. An automatic account does not take all
             of them: three open automatic trades is the usual limit, and five is the most. The rest stay on the
-            channel and on this desk for you to place by hand.
+            channel and on this desk for you to place by hand. An automatic account also closes the position when
+            the opposite signal prints, so use the current SignalBridge file.
           </p>
           <p className="help">
             Prices come from Yahoo Finance. A forex order is skipped if the broker price has already run
             more than 40% of the way to the stop. Gold, silver, WTI, Brent, natural gas, copper, and soybeans
-            are filled at the MT5 price. The stop and target keep the same distance, rescaled when the
-            broker quotes a different unit.
+            are filled at the MT5 price. The stop keeps the same distance, rescaled when the broker quotes a
+            different unit. On those markets one pip is 0.01% of price, because the 40-pip and 50-pip rules were
+            written for currencies.
           </p>
         </article>
       </div>

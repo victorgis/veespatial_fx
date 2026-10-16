@@ -300,8 +300,54 @@ double FitLots(string symbol, double lots)
    return lots;
 }
 
+void CloseLine(string id, string comment)
+{
+   int ticket = -1;
+   double lots = 0;
+   string symbol = "";
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(!OrderSelect(i, SELECT_BY_POS, MODE_TRADES)) continue;
+      if(OrderMagicNumber() != Magic) continue;
+      if(StringFind(OrderComment(), comment) != 0) continue;
+      int next = StringLen(comment);
+      if(StringLen(OrderComment()) > next)
+      {
+         int ch = StringGetChar(OrderComment(), next);
+         if(ch >= '0' && ch <= '9') continue;
+      }
+      ticket = OrderTicket();
+      lots = OrderLots();
+      symbol = OrderSymbol();
+      break;
+   }
+   if(ticket < 0)
+   {
+      Report(id, "closed", 0, 0, 0, "", "already flat");
+      LastNote = comment + " is already flat.";
+      return;
+   }
+   if(!OrderSelect(ticket, SELECT_BY_TICKET, MODE_TRADES)) return;
+   RefreshRates();
+   double price = (OrderType() == OP_BUY) ? MarketInfo(symbol, MODE_BID) : MarketInfo(symbol, MODE_ASK);
+   if(!OrderClose(ticket, lots, NormalizeDouble(price, (int)MarketInfo(symbol, MODE_DIGITS)), SlippagePoints, clrNONE))
+   {
+      LastNote = symbol + " close failed (" + IntegerToString(GetLastError()) + ").";
+      return;
+   }
+   Report(id, "closed", ticket, price, lots, symbol, "closed on the opposite ICWR signal");
+   LastNote = symbol + " closed, ticket " + IntegerToString(ticket) + ".";
+}
+
 void PlaceLine(string line)
 {
+   if(StringFind(line, "close|") == 0)
+   {
+      string bits[];
+      int c = StringSplit(line, '|', bits);
+      if(c >= 3) CloseLine(bits[1], bits[2]);
+      return;
+   }
    string parts[];
    int n = StringSplit(line, '|', parts);
    if(n < 9) return;
@@ -314,6 +360,12 @@ void PlaceLine(string line)
    double chase = StringToDouble(parts[7]);
    string comment = parts[8];
    StringTrimRight(comment);
+
+   if(side == "close")
+   {
+      CloseLine(id, comment);
+      return;
+   }
 
    int existing = 0;
    double openPrice = 0, openLots = 0;
@@ -383,12 +435,13 @@ void PlaceLine(string line)
    double point = MarketInfo(chosen, MODE_POINT);
    double scale = anchored ? QuoteScale(entry, price) : 1.0;
    double slDist = MathAbs(entry - sl) * scale;
-   double tpDist = slDist;
+   bool noTarget = (tp <= 0.0);
+   double tpDist = noTarget ? 0.0 : MathAbs(entry - tp) * scale;
    double planned = slDist;
    if(anchored && SpreadWidenRatio > 0 && planned > 0 && spreadPrice > planned * SpreadWidenRatio)
       slDist += spreadPrice;
    double minDist = MarketInfo(chosen, MODE_STOPLEVEL) * point;
-   if(minDist > 0 && (slDist < minDist || tpDist < minDist))
+   if(minDist > 0 && (slDist < minDist || (!noTarget && tpDist < minDist)))
    {
       if(!anchored)
       {
@@ -396,7 +449,7 @@ void PlaceLine(string line)
          return;
       }
       if(slDist < minDist) slDist = minDist;
-      if(tpDist < minDist) tpDist = minDist;
+      if(!noTarget && tpDist < minDist) tpDist = minDist;
    }
    if(anchored && planned > 0 && slDist > planned)
    {
@@ -404,7 +457,7 @@ void PlaceLine(string line)
       if(shrunk > 0) lots = shrunk;
    }
    double final_sl = (side == "buy") ? (price - slDist) : (price + slDist);
-   double final_tp = (side == "buy") ? (price + tpDist) : (price - tpDist);
+   double final_tp = noTarget ? 0.0 : ((side == "buy") ? (price + tpDist) : (price - tpDist));
    string fillNote = (anchored && slDist > planned + point) ? "filled, stop widened for the spread" : "filled";
    int cmd = (side == "buy") ? OP_BUY : OP_SELL;
    int ticket = OrderSend(chosen, cmd, lots, NormalizeDouble(price, digits), SlippagePoints, NormalizeDouble(final_sl, digits), NormalizeDouble(final_tp, digits), comment, Magic, 0, clrNONE);

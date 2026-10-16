@@ -87,11 +87,12 @@ def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db))
     if row.trade_mode != "auto" or row.platform == "xm":
         text = format_orders(row.trade_mode, row.account_type, "", [])
         return Response(content=text, media_type="text/plain")
+    closes = _close_orders(db, user.id, row)
     mismatch, message = account_mismatch(row)
     if mismatch and not row.trust_platform_size:
         _mark(db, user.id, "paused", message or "Account type does not match the platform.")
         db.commit()
-        text = format_orders(row.trade_mode, row.account_type, message or "paused", [])
+        text = format_orders(row.trade_mode, row.account_type, message or "paused", closes)
         return Response(content=text, media_type="text/plain")
 
     failed = (
@@ -121,7 +122,7 @@ def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db))
         .with_for_update()
         .all()
     )
-    outgoing: list[OrderOut] = []
+    outgoing: list[OrderOut] = list(closes)
     waiting_specs = False
     for delivery, signal in queued:
         spec = get_symbol(signal.symbol_id)
@@ -161,6 +162,37 @@ def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db))
     db.commit()
     warn = ""
     return Response(content=format_orders(row.trade_mode, row.account_type, warn, outgoing), media_type="text/plain")
+
+
+def _close_orders(db: Session, user_id: int, row: Settings) -> list[OrderOut]:
+    """Flatten copier trades whose ICWR signal has flipped."""
+    closing = (
+        db.query(Delivery, Signal)
+        .join(Signal, Signal.id == Delivery.signal_id)
+        .filter(Delivery.user_id == user_id, Delivery.status == "close_queued")
+        .order_by(Signal.id.asc())
+        .all()
+    )
+    orders: list[OrderOut] = []
+    for delivery, signal in closing:
+        spec = get_symbol(signal.symbol_id)
+        if spec is None:
+            continue
+        names = list(aliases_for(spec, row.alias_overrides))
+        orders.append(
+            OrderOut(
+                delivery_id=delivery.id,
+                side="close",
+                symbols=names or [spec.display],
+                entry=0.0,
+                sl=0.0,
+                tp=0.0,
+                lots=0.0,
+                chase=0.0,
+                comment=f"fx{delivery.id}",
+            )
+        )
+    return orders
 
 
 def _mark(db: Session, user_id: int, status: str, message: str) -> None:
@@ -210,6 +242,12 @@ async def executions(request: Request, user: User = Depends(current_ea_user), db
             signal.status = "target"
             signal.close_price = report.fill_price or signal.tp
             signal.closed_at = utcnow()
+    elif report.status == "closed":
+        delivery.status = "closed"
+        delivery.message = report.message or "Closed on the opposite ICWR signal."
+        delivery.updated_at = utcnow()
+        if report.fill_price:
+            delivery.fill_price = report.fill_price
     elif delivery.status != "placed":
         delivery.status = "placed" if report.status == "placed" else "not_placed"
         delivery.ticket = report.ticket or None

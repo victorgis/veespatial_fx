@@ -19,8 +19,8 @@ input int    Magic            = 56021;
 input int    SlippagePoints   = 30;
 input int    MaxSpreadPoints  = 40;
 input double MaxLots          = 0; // 0 = no extra ceiling. The website max lot still applies.
-input double BreakEvenProfitUSD = 4.0; // Floating profit that moves the stop to the entry price. 0 = off.
-input double LockProfitTriggerUSD = 5.0; // Floating profit that locks a winner. 0 = off.
+input double BreakEvenProfitUSD = 0; //0.4 Floating profit that moves the stop to the entry price. 0 = off.
+input double LockProfitTriggerUSD = 0; //0.5 Floating profit that locks a winner. 0 = off.
 input double LockProfitUSD = 1.0; // Profit the stop locks in once the trigger is reached.
 input double SpreadWidenRatio = 0.15; // When the spread is this fraction of the stop, push the stop out by the spread.
 
@@ -548,8 +548,80 @@ void CheckBreakEven()
    }
 }
 
+bool CommentMatches(const string posComment, const string comment)
+{
+   if(StringFind(posComment, comment) != 0) return false;
+   int next = StringLen(comment);
+   if(StringLen(posComment) == next) return true;
+   int ch = StringGetCharacter(posComment, next);
+   return (ch < '0' || ch > '9');
+}
+
+void CloseLine(const string id, const string comment)
+{
+   ulong ticket = 0;
+   double price = 0, lots = 0;
+   string symbol = "";
+   bool found = false;
+   for(int i = PositionsTotal() - 1; i >= 0; i--)
+   {
+      ulong t = PositionGetTicket(i);
+      if(t == 0 || !PositionSelectByTicket(t)) continue;
+      if((int)PositionGetInteger(POSITION_MAGIC) != Magic) continue;
+      if(!CommentMatches(PositionGetString(POSITION_COMMENT), comment)) continue;
+      ticket = t;
+      price = PositionGetDouble(POSITION_PRICE_OPEN);
+      lots = PositionGetDouble(POSITION_VOLUME);
+      symbol = PositionGetString(POSITION_SYMBOL);
+      found = true;
+      break;
+   }
+   if(!found)
+   {
+      Report(id, "closed", 0, 0, 0, "", "already flat");
+      LastNote = comment + " is already flat.";
+      return;
+   }
+   if(!PositionSelectByTicket(ticket)) return;
+   string sym = PositionGetString(POSITION_SYMBOL);
+   long type = PositionGetInteger(POSITION_TYPE);
+   double volume = PositionGetDouble(POSITION_VOLUME);
+   double bid = SymbolInfoDouble(sym, SYMBOL_BID);
+   double ask = SymbolInfoDouble(sym, SYMBOL_ASK);
+   MqlTradeRequest req;
+   MqlTradeResult res;
+   ZeroMemory(req);
+   ZeroMemory(res);
+   req.action = TRADE_ACTION_DEAL;
+   req.position = ticket;
+   req.symbol = sym;
+   req.volume = volume;
+   req.type = (type == POSITION_TYPE_BUY) ? ORDER_TYPE_SELL : ORDER_TYPE_BUY;
+   req.price = (type == POSITION_TYPE_BUY) ? bid : ask;
+   req.deviation = SlippagePoints;
+   req.magic = Magic;
+   req.comment = comment;
+   req.type_filling = Filling(sym);
+   req.type_time = ORDER_TIME_GTC;
+   if(!OrderSend(req, res) || (res.retcode != TRADE_RETCODE_DONE && res.retcode != TRADE_RETCODE_DONE_PARTIAL))
+   {
+      LastNote = sym + " close was rejected (" + IntegerToString((int)res.retcode) + ").";
+      return;
+   }
+   double fill = res.price > 0 ? res.price : req.price;
+   Report(id, "closed", ticket, fill, volume, sym, "closed on the opposite ICWR signal");
+   LastNote = sym + " closed, ticket " + IntegerToString((int)ticket) + ".";
+}
+
 void PlaceLine(const string line)
 {
+   if(StringFind(line, "close|") == 0)
+   {
+      string bits[];
+      int c = StringSplit(line, '|', bits);
+      if(c >= 3) CloseLine(bits[1], bits[2]);
+      return;
+   }
    string parts[];
    int n = StringSplit(line, '|', parts);
    if(n < 9) return;
@@ -563,6 +635,12 @@ void PlaceLine(const string line)
    double chase = StringToDouble(parts[7]);
    string comment = parts[8];
    StringTrimRight(comment);
+
+   if(side == "close")
+   {
+      CloseLine(id, comment);
+      return;
+   }
 
    if(IsDeliveryProcessed(id))
    {
@@ -644,7 +722,8 @@ void PlaceLine(const string line)
    double point = SymbolInfoDouble(chosen, SYMBOL_POINT);
    double scale = anchored ? QuoteScale(entry, price) : 1.0;
    double slDist = MathAbs(entry - sl) * scale;
-   double tpDist = slDist; // Exact distance as stop loss (1:1 Risk-to-Reward)
+   bool noTarget = (tp <= 0.0);
+   double tpDist = noTarget ? 0.0 : MathAbs(entry - tp) * scale;
    double planned = slDist;
    if(anchored && SpreadWidenRatio > 0 && planned > 0 && spreadPrice > planned * SpreadWidenRatio)
       slDist += spreadPrice;
@@ -661,7 +740,7 @@ void PlaceLine(const string line)
       }
       slDist = minDist;
    }
-   if(minDist > 0 && tpDist < minDist)
+   if(!noTarget && minDist > 0 && tpDist < minDist)
    {
       if(!anchored)
       {
@@ -677,7 +756,9 @@ void PlaceLine(const string line)
       if(shrunk > 0) lots = shrunk;
    }
    double final_sl = (side == "buy") ? (price - slDist) : (price + slDist);
-   double final_tp = (side == "buy") ? (price + tpDist) : (price - tpDist);
+   double final_tp = 0.0;
+   if(!noTarget)
+      final_tp = (side == "buy") ? (price + tpDist) : (price - tpDist);
    string fillNote = (anchored && slDist > planned + point) ? "filled, stop widened for the spread" : "filled";
    MqlTradeRequest req;
    MqlTradeResult res;
@@ -689,7 +770,7 @@ void PlaceLine(const string line)
    req.type = (side == "buy") ? ORDER_TYPE_BUY : ORDER_TYPE_SELL;
    req.price = price;
    req.sl = NormalizeDouble(final_sl, digits);
-   req.tp = NormalizeDouble(final_tp, digits);
+   req.tp = noTarget ? 0.0 : NormalizeDouble(final_tp, digits);
    req.deviation = SlippagePoints;
    req.magic = Magic;
    req.comment = comment;

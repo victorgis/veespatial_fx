@@ -3,7 +3,7 @@ import { desk, getToken } from "./api";
 
 export type Toast = {
   id: string;
-  type: "placed" | "be" | "tp" | "info";
+  type: "placed" | "be" | "tp" | "exit" | "info";
   title: string;
   message: string;
   timestamp: Date;
@@ -32,10 +32,12 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
     placed: Set<string>;
     be: Set<string>;
     tp: Set<string>;
+    exit: Set<string>;
   }>({
     placed: new Set(),
     be: new Set(),
     tp: new Set(),
+    exit: new Set(),
   });
   const initialLoadRef = useRef(true);
 
@@ -105,12 +107,14 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
             sig.delivery_status === "sl_to_entry" ||
             (sig.status === "active" && sig.sl === sig.entry);
           const isTP = sig.status === "target";
+          const isExit = sig.status === "exit";
 
           if (initialLoadRef.current) {
             // Populate seen on initial load so we don't spam toasts on page reload
             if (isPlaced) seenRef.current.placed.add(sigKey);
             if (isBE) seenRef.current.be.add(sigKey);
             if (isTP) seenRef.current.tp.add(sigKey);
+            if (isExit) seenRef.current.exit.add(sigKey);
             continue;
           }
 
@@ -141,6 +145,15 @@ export function NotificationProvider({ children }: { children: React.ReactNode }
               type: "tp",
               title: `🎯 Take Profit Hit: ${sig.display}!`,
               message: `1:1 Target achieved! Profit locked in at ${sig.close_price || sig.tp}.`,
+            });
+          }
+
+          if (isExit && !seenRef.current.exit.has(sigKey)) {
+            seenRef.current.exit.add(sigKey);
+            addToast({
+              type: "exit",
+              title: `Opposite signal: ${sig.display}`,
+              message: `Close the ${sig.side} trade. The ICWR signal flipped${sig.close_price ? ` at ${sig.close_price}` : ""}.`,
             });
           }
         }

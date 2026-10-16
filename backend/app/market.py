@@ -123,7 +123,10 @@ def session_open(now: datetime | None = None) -> bool:
 
 
 def is_no_trade_window(now: datetime | None = None) -> bool:
-    """Blocks new trades between 9:00 PM WAT (20:00 UTC) and 2:00 AM WAT (01:00 UTC)."""
+    """True between 9:00 PM WAT (20:00 UTC) and 2:00 AM WAT (01:00 UTC).
+
+    The intraday ICWR rules have no clock filter, so the scan does not call this.
+    """
     now = _as_utc(now or datetime.now(timezone.utc))
     hour = now.hour
     return hour >= 20 or hour < 1
@@ -202,18 +205,23 @@ class YahooMarket(MarketData):
                 continue
 
             bars_5m: list[Bar] = []
-            try:
-                df_5m = yf.download(
-                    ticker,
-                    period="5d",
-                    interval="5m",
-                    progress=False,
-                    auto_adjust=False,
-                    threads=False,
-                )
-                bars_5m = _frame_to_bars(df_5m)
-            except Exception:
-                pass
+            # Yahoo serves about 60 days of 5-minute candles. The active wave
+            # can sit further back than a single session when the range is quiet.
+            for period in ("60d", "5d"):
+                try:
+                    df_5m = yf.download(
+                        ticker,
+                        period=period,
+                        interval="5m",
+                        progress=False,
+                        auto_adjust=False,
+                        threads=False,
+                    )
+                    bars_5m = _frame_to_bars(df_5m)
+                except Exception:
+                    bars_5m = []
+                if bars_5m:
+                    break
 
             now_dt = datetime.now(timezone.utc)
             m5 = drop_forming(bars_5m, 5, now_dt) if bars_5m else []
@@ -228,18 +236,16 @@ class YahooMarket(MarketData):
             error: str | None = None
 
             if not session_open(now_dt):
-                skip = f"{spec.display}: market is closed, no new 15-minute trade"
-            elif is_no_trade_window(now_dt):
-                skip = f"{spec.display}: no-trade window active (9:00 PM - 2:00 AM WAT)"
-            elif not m15:
-                skip = f"{spec.display}: no closed 15-minute candle, so no new trade"
-            elif not m15_is_fresh(m15, now_dt):
-                skip = f"{spec.display}: last 15-minute candle {m15[-1].time.strftime('%H:%M')} UTC is too old to trade"
+                skip = f"{spec.display}: market is closed, no new 5-minute trade"
+            elif not m5:
+                skip = f"{spec.display}: no closed 5-minute candle, so no new trade"
+            elif not m5_is_fresh(m5, now_dt):
+                skip = f"{spec.display}: last 5-minute candle {m5[-1].time.strftime('%H:%M')} UTC is too old to trade"
             else:
                 tradable = True
 
             return FetchResult(
-                m15,
+                m5,
                 label,
                 error=error,
                 hourly=bars_1h,

@@ -75,6 +75,7 @@ export function SignalDetail() {
         <p className="lede">{signal.pair}</p>
       </header>
       <div className="stack">
+        {signal.status === "exit" ? <Banner tone="warn" title="Close this trade" children="The opposite ICWR signal printed. An automatic account is told to flatten. If you placed it yourself, close it at the market." /> : null}
         {signal.mt5_only ? <Banner tone="warn" title="This cash market is on MT5" children={signal.note} /> : null}
         {signal.quote.blocked ? <Banner tone="bad" title="Check the account type" children={signal.quote.reason || undefined} /> : null}
         <article className={`card signal ${signal.side}`}>
@@ -103,7 +104,7 @@ export function SignalDetail() {
           <ol className="guide">
             <li>Open {signal.display} on MT5, MT4, or the XM app. For oil, search OILCash. For Brent, search BRENTCash.</li>
             <li>Choose {signal.side === "buy" ? "Buy" : "Sell"} and enter the lot size above for your account type.</li>
-            <li>Set the stop and the target to the prices on this page before you confirm.</li>
+            <li>{signal.tp > 0 ? "Set the stop and the target to the prices on this page before you confirm." : "Set the stop to the price on this page. Do not set a take profit. Close the trade when the opposite signal prints, or when the stop is hit."}</li>
             <li>Come back and mark it placed, so your journal stays honest.</li>
           </ol>
         </article>

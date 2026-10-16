@@ -118,6 +118,11 @@ def format_orders(mode: str, account_type: str, warn: str, orders: list[OrderOut
         "---",
     ]
     for order in orders:
+        if order.side == "close":
+            # Three fields. An older copier ignores a line this short, so it
+            # cannot mistake a close for a new sell.
+            lines.append(f"close|{order.delivery_id}|{order.comment}")
+            continue
         names = ",".join(order.symbols)
         lines.append(
             "|".join(
@@ -173,7 +178,7 @@ def parse_execution(body: str) -> ExecutionIn:
     except ValueError:
         lots = None
     status = fields.get("status") or "not_placed"
-    if status not in ("placed", "not_placed", "sl_to_entry", "sl_lock", "tp_hit"):
+    if status not in ("placed", "not_placed", "sl_to_entry", "sl_lock", "tp_hit", "closed"):
         status = "not_placed"
     return ExecutionIn(
         delivery_id=delivery_id,

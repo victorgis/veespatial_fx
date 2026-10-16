@@ -21,8 +21,9 @@ class Settings(BaseSettings):
     scheduler_enabled: bool = True
     # A closed 5-minute candle should be seen within a minute.
     scan_interval_seconds: int = 60
+    # Kept so an old environment variable does not crash. ICWR does not expire a trade.
     signal_expiry_hours: int = 6
-    # Kept so an old environment variable does not crash. The scan uses minutes.
+    # Kept so an old environment variable does not crash. ICWR has no cooldown.
     min_hours_between: int = 6
     min_minutes_between: int = 15
     telegram_bot_token: str = ""
