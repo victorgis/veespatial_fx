@@ -4,7 +4,7 @@ import hmac
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
@@ -84,11 +84,41 @@ def scan(
     return ScanResultOut(**result)
 
 
+def _copier_version(path: Path) -> str:
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if "#property version" in line.lower() and '"' in line:
+                return line.split('"')[1].strip()
+    except OSError:
+        pass
+    try:
+        return str(int(path.stat().st_mtime))
+    except OSError:
+        return "0"
+
+
 @router.get("/downloads/{name}")
-def download(name: str) -> FileResponse:
+def download(name: str) -> Response:
     if name not in ("SignalBridge.mq5", "SignalBridge.mq4"):
         raise HTTPException(status_code=404, detail="That file is not available.")
     path = experts_dir() / name
     if not path.is_file():
         raise HTTPException(status_code=404, detail="The copier file is not on this server.")
-    return FileResponse(path, filename=name, media_type="text/plain")
+    try:
+        body = path.read_bytes()
+    except OSError as exc:
+        raise HTTPException(status_code=404, detail="The copier file is not on this server.") from exc
+    version = _copier_version(path)
+    # A plain Response omits ETag / Last-Modified so a browser or proxy cannot
+    # keep serving a previous copy of SignalBridge after experts/ changes.
+    return Response(
+        content=body,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{name}"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Copier-Version": version,
+        },
+    )

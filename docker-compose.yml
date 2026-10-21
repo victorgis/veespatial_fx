@@ -6,6 +6,9 @@ services:
     env_file: .env
     volumes:
       - ./data:/app/data
+      # Host files, not the copy from the last image build. compose up without
+      # --build still serves the current SignalBridge from this folder.
+      - ./experts:/app/experts:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')"]
       interval: 30s

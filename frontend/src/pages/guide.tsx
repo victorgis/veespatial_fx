@@ -8,6 +8,7 @@ export function Guide() {
   const [key, setKey] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [bust] = useState(() => Date.now());
   if (!me) return null;
   const origin = window.location.origin;
 
@@ -70,7 +71,17 @@ export function Guide() {
           <h2>Attach the copier</h2>
           <ol className="guide">
             <li>Choose Automatic in Settings, and MT5 if you want OILCash or BRENTCash.</li>
-            <li>Download <a href="/api/downloads/SignalBridge.mq5">SignalBridge.mq5</a> or <a href="/api/downloads/SignalBridge.mq4">SignalBridge.mq4</a>.</li>
+            <li>
+              Download{" "}
+              <a href={`/api/downloads/SignalBridge.mq5?v=${bust}`} download="SignalBridge.mq5">
+                SignalBridge.mq5
+              </a>{" "}
+              or{" "}
+              <a href={`/api/downloads/SignalBridge.mq4?v=${bust}`} download="SignalBridge.mq4">
+                SignalBridge.mq4
+              </a>
+              .
+            </li>
             <li>In MetaTrader, File → Open Data Folder → MQL5 (or MQL4) → Experts. Copy the file in and refresh the Navigator.</li>
             <li>Tools → Options → Expert Advisors. Allow algorithmic trading. Allow WebRequest for <span className="keybox" style={{ display: "inline" }}>{origin}</span>.</li>
             <li>Drag SignalBridge onto any chart. Set ApiBase to that same address and paste the copier key. Turn on AutoTrading.</li>

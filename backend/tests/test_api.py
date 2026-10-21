@@ -497,5 +497,10 @@ def test_download_and_markets(client):
     downloaded = client.get("/api/downloads/SignalBridge.mq5")
     assert downloaded.status_code == 200
     assert "WebRequest" in downloaded.text
+    assert "LooksMicro" in downloaded.text
+    assert "no-store" in downloaded.headers.get("cache-control", "")
+    assert downloaded.headers.get("x-copier-version") == "1.12"
+    assert "attachment" in downloaded.headers.get("content-disposition", "")
+    assert "etag" not in downloaded.headers
     assert client.get("/api/health").json()["ok"] is True
     assert client.get("/health").json()["ok"] is True
