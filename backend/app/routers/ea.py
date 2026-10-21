@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.ea_proto import OrderOut, format_orders, parse_execution, parse_heartbeat
 from app.models import BrokerSpec, Delivery, Settings, Signal, User, utcnow
-from app.quotes import account_mismatch, anchor_levels, build_quote
+from app.quotes import account_for_names, account_mismatch, anchor_levels, build_quote
 from app.security import current_ea_user
 from app.sizing import ANCHORED_GROUPS
 from app.symbols import SYMBOLS, aliases_for, get_symbol
@@ -21,6 +21,10 @@ _RETRY_REASONS = (
     "Stop or target is closer than the broker allows.",
     "The size is below this symbol's minimum.",
     "Spread is too wide to price the stop.",
+)
+_NAME_RETRY = (
+    "None of the symbol names are on this platform.",
+    "The size is below this symbol's minimum.",
 )
 
 router = APIRouter(prefix="/api/ea", tags=["ea"])
@@ -77,41 +81,54 @@ async def heartbeat(request: Request, user: User = Depends(current_ea_user), db:
     db.commit()
     mismatch, message = account_mismatch(row)
     warn = message or ""
-    body = f"ok\nmismatch={'1' if mismatch else '0'}\nwarn={warn}\n"
+    kind = account_for_names(row)
+    body = f"ok\nmismatch={'1' if mismatch else '0'}\naccount_type={kind}\nwarn={warn}\n"
     return Response(content=body, media_type="text/plain")
 
 
 @router.get("/orders")
 def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db)) -> Response:
     row = _settings(db, user)
+    kind = account_for_names(row)
     if row.trade_mode != "auto" or row.platform == "xm":
-        text = format_orders(row.trade_mode, row.account_type, "", [])
+        text = format_orders(row.trade_mode, kind, "", [])
         return Response(content=text, media_type="text/plain")
     closes = _close_orders(db, user.id, row)
     mismatch, message = account_mismatch(row)
     if mismatch and not row.trust_platform_size:
         _mark(db, user.id, "paused", message or "Account type does not match the platform.")
         db.commit()
-        text = format_orders(row.trade_mode, row.account_type, message or "paused", closes)
+        text = format_orders(row.trade_mode, kind, message or "paused", closes)
         return Response(content=text, media_type="text/plain")
 
     failed = (
         db.query(Delivery, Signal)
         .join(Signal, Signal.id == Delivery.signal_id)
-        .filter(
-            Delivery.user_id == user.id,
-            Delivery.status == "not_placed",
-            Signal.status == "active",
-            Signal.symbol_id.in_(_ANCHORED_IDS),
-        )
+        .filter(Delivery.user_id == user.id, Delivery.status == "not_placed", Signal.status == "active")
         .all()
     )
     now = utcnow()
-    for delivery, _signal in failed:
-        if any(reason in (delivery.message or "") for reason in _RETRY_REASONS):
+    specs_cache = db.query(BrokerSpec).filter(BrokerSpec.user_id == user.id).all()
+    for delivery, signal in failed:
+        message = delivery.message or ""
+        anchored = signal.symbol_id in _ANCHORED_IDS
+        if anchored and any(reason in message for reason in _RETRY_REASONS):
             delivery.status = "queued"
             delivery.message = "Waiting for your platform."
             delivery.updated_at = now
+            continue
+        if not any(reason in message for reason in _NAME_RETRY):
+            continue
+        spec = get_symbol(signal.symbol_id)
+        if spec is None:
+            continue
+        entry, sl, tp = anchor_levels(spec, signal.side, signal.entry, signal.sl, signal.tp, specs_cache, row)
+        quote = build_quote(db, row, spec, signal.side, entry, sl, tp, broker_specs=specs_cache)
+        if quote.blocked or quote.lots is None:
+            continue
+        delivery.status = "queued"
+        delivery.message = "Waiting for your platform."
+        delivery.updated_at = now
     db.flush()
 
     queued = (
@@ -141,7 +158,7 @@ def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db))
             delivery.message = quote.reason or "No size was safe for this account."
             delivery.updated_at = utcnow()
             continue
-        names = list(aliases_for(spec, row.alias_overrides))
+        names = list(aliases_for(spec, row.alias_overrides, account_for_names(row)))
         if quote.broker_symbol:
             names = [quote.broker_symbol] + [name for name in names if name != quote.broker_symbol]
         outgoing.append(
@@ -161,7 +178,7 @@ def orders(user: User = Depends(current_ea_user), db: Session = Depends(get_db))
         delivery.updated_at = utcnow()
     db.commit()
     warn = ""
-    return Response(content=format_orders(row.trade_mode, row.account_type, warn, outgoing), media_type="text/plain")
+    return Response(content=format_orders(row.trade_mode, kind, warn, outgoing), media_type="text/plain")
 
 
 def _close_orders(db: Session, user_id: int, row: Settings) -> list[OrderOut]:
@@ -178,7 +195,7 @@ def _close_orders(db: Session, user_id: int, row: Settings) -> list[OrderOut]:
         spec = get_symbol(signal.symbol_id)
         if spec is None:
             continue
-        names = list(aliases_for(spec, row.alias_overrides))
+        names = list(aliases_for(spec, row.alias_overrides, account_for_names(row)))
         orders.append(
             OrderOut(
                 delivery_id=delivery.id,

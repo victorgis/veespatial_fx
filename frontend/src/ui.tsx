@@ -22,28 +22,39 @@ export function Prices({ signal }: { signal: Signal }) {
   );
 }
 
+const FILLED_STATUSES = new Set(["placed", "you_placed", "closed", "close_queued"]);
+
 export function SizeBlock({ signal }: { signal: Signal }) {
   const quote = signal.quote;
   if (!quote) return null;
+  const filled = FILLED_STATUSES.has(signal.delivery_status || "");
+  const shownLots = filled && signal.placed_lots != null ? signal.placed_lots : quote.lots;
   const account = quote.balance_source === "platform" ? "your platform balance" : "your planning balance";
+  let note: string;
+  if (filled) {
+    const where = signal.broker_symbol ? ` as ${signal.broker_symbol}` : " on your platform";
+    note = signal.placed_lots != null
+      ? `Filled ${lots(signal.placed_lots)} lots${where}.`
+      : "This order was already sent to your platform.";
+  } else if (quote.reason) {
+    note = quote.reason;
+  } else {
+    note = `About ${money(quote.risk_cash, quote.currency)} at risk if the stop is hit.`;
+    if (quote.uses_live_contract) note += " Sized from the contract on your platform.";
+    if (quote.approximate) note += " This cross is an estimate until the platform is connected.";
+  }
   return (
     <div className="size-block">
       <span className="faint">Your size · {account} {money(quote.balance, quote.currency)}</span>
-      {quote.lots != null ? (
+      {shownLots != null ? (
         <b>
-          {lots(quote.lots)} lots
-          {quote.units != null ? ` · ${quote.units.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${quote.unit}` : ""}
+          {lots(shownLots)} lots
+          {quote.units != null && !filled ? ` · ${quote.units.toLocaleString("en-US", { maximumFractionDigits: 2 })} ${quote.unit}` : ""}
         </b>
       ) : (
         <b>No automatic size</b>
       )}
-      <span className="muted">
-        {quote.reason
-          ? quote.reason
-          : `About ${money(quote.risk_cash, quote.currency)} at risk if the stop is hit.`}
-        {quote.uses_live_contract ? " Sized from the contract on your platform." : ""}
-        {quote.approximate ? " This cross is an estimate until the platform is connected." : ""}
-      </span>
+      <span className="muted">{note}</span>
     </div>
   );
 }

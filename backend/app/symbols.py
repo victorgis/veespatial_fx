@@ -14,6 +14,8 @@ from dataclasses import dataclass
 
 
 _ALIAS = re.compile(r"^[A-Za-z0-9._#]{2,32}$")
+# XM micro names: EURUSDmicro, EURUSD.micro, EURUSDm, EURUSDm#.
+_XM_SUFFIXES = ("", "micro", ".micro", "m", "m#", "#", ".", ".m")
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,43 @@ class Symbol:
     price_divisor: int = 100_000
 
 
+def xm_names(*roots: str) -> tuple[str, ...]:
+    """Standard, micro, ultra-low, and dotted XM names for each root."""
+    out: list[str] = []
+    seen: set[str] = set()
+    for root in roots:
+        for suffix in _XM_SUFFIXES:
+            name = root + suffix
+            key = name.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(name)
+    return tuple(out)
+
+
+def with_micro_forms(aliases: tuple[str, ...]) -> tuple[str, ...]:
+    extra: list[str] = []
+    for name in aliases:
+        extra.append(name + "micro")
+        extra.append(name + ".micro")
+    return tuple(dict.fromkeys((*aliases, *extra)))
+
+
+def is_micro_symbol_name(name: str) -> bool:
+    """True for XM micro spellings such as EURUSDmicro, EURUSD.micro, EURUSDm."""
+    token = (name or "").upper()
+    if not token:
+        return False
+    if "MICRO" in token:
+        return True
+    if token.endswith("M#") or token.endswith(".M"):
+        return True
+    if token.endswith("M") and len(token) >= 2 and not token[-2].isdigit():
+        return True
+    return False
+
+
 def _fx(
     id_: str,
     display: str,
@@ -56,7 +95,7 @@ def _fx(
         pair=pair,
         group="currency",
         yahoo=(yahoo,),
-        aliases=(base, base + "m", base + "micro", base + "#", base + "m#", base + ".", base + ".m"),
+        aliases=xm_names(base),
         contract_standard=100_000,
         scales_with_account=True,
         pip=pip,
@@ -87,7 +126,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Gold vs US dollar",
         group="metal",
         yahoo=("GC=F", "XAUUSD=X"),
-        aliases=("GOLD", "GOLD#", "XAUUSD", "XAUUSD#", "GOLDmicro", "GOLDm#", "XAUUSDmicro", "XAUUSDm"),
+        aliases=xm_names("GOLD", "XAUUSD"),
         contract_standard=100,  # troy ounces
         scales_with_account=True,
         pip=0.01,
@@ -105,7 +144,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Silver vs US dollar",
         group="metal",
         yahoo=("SI=F", "XAGUSD=X"),
-        aliases=("SILVER", "SILVER#", "SILVERCash", "SILVERCash#", "XAGUSD", "XAGUSD#", "SILVERmicro", "SILVERm#", "XAGUSDmicro", "XAGUSDm"),
+        aliases=xm_names("SILVER", "SILVERCash", "XAGUSD"),
         contract_standard=5000,  # troy ounces
         scales_with_account=True,
         pip=0.01,
@@ -123,7 +162,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="West Texas crude, cash",
         group="energy",
         yahoo=("CL=F",),
-        aliases=("OILCash", "OILCash#", "OILCash.m", "USOIL", "WTI", "XTIUSD"),
+        aliases=with_micro_forms(("OILCash", "OILCash#", "OILCash.m", "USOIL", "WTI", "XTIUSD")),
         contract_standard=100,  # barrels
         scales_with_account=False,
         pip=0.01,
@@ -141,7 +180,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Brent crude, cash",
         group="energy",
         yahoo=("BZ=F",),
-        aliases=("BRENTCash", "BRENTCash#", "BRENTCash.m", "UKOIL", "XBRUSD"),
+        aliases=with_micro_forms(("BRENTCash", "BRENTCash#", "BRENTCash.m", "UKOIL", "XBRUSD")),
         contract_standard=100,
         scales_with_account=False,
         pip=0.01,
@@ -159,7 +198,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="High Grade Copper",
         group="commodity",
         yahoo=("HG=F",),
-        aliases=("HGCOP", "HGCOP#", "COPPER", "COPPER#", "COPPERCash", "COPPERCash#", "HGCOPPER", "COPPER.c"),
+        aliases=with_micro_forms(("HGCOP", "HGCOP#", "COPPER", "COPPER#", "COPPERCash", "COPPERCash#", "HGCOPPER", "COPPER.c")),
         contract_standard=2000,  # lbs. XM's HGCOP contract is 2,000 lbs.
         scales_with_account=False,
         pip=0.001,
@@ -175,7 +214,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Natural Gas, cash",
         group="energy",
         yahoo=("NG=F",),
-        aliases=("NGASCash", "NGASCash#", "NATGASCash", "NATGASCash#", "NGAS", "NGAS#", "NATGAS", "NGAS.c", "NGAS.m"),
+        aliases=with_micro_forms(("NGASCash", "NGASCash#", "NATGASCash", "NATGASCash#", "NGAS", "NGAS#", "NATGAS", "NGAS.c", "NGAS.m")),
         contract_standard=1000,  # MMBtu
         scales_with_account=False,
         pip=0.001,
@@ -191,7 +230,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="US Soybeans",
         group="commodity",
         yahoo=("ZS=F",),
-        aliases=("SBEAN", "SBEAN#", "SOYBEAN", "SOYBEAN#", "SOYBEANCash", "SOYBEANCash#", "SOYBEAN.c", "SOY"),
+        aliases=with_micro_forms(("SBEAN", "SBEAN#", "SOYBEAN", "SOYBEAN#", "SOYBEANCash", "SOYBEANCash#", "SOYBEAN.c", "SOY")),
         contract_standard=400,  # bushels. XM's SBEAN contract is 400 bushels.
         scales_with_account=False,
         pip=0.01,
@@ -207,7 +246,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Dow Jones 30 Cash",
         group="index",
         yahoo=("^DJI", "YM=F"),
-        aliases=("US30", "US30Cash", "US30Cash#", "US30#", "DJ30", "USA30", "US30.pro", "US30.m", "WS30"),
+        aliases=with_micro_forms(("US30", "US30Cash", "US30Cash#", "US30#", "DJ30", "USA30", "US30.pro", "US30.m", "WS30")),
         contract_standard=1.0,  # 1 point per lot
         scales_with_account=False,
         pip=1.0,
@@ -223,7 +262,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Nasdaq 100 Cash",
         group="index",
         yahoo=("^NDX", "NQ=F"),
-        aliases=("US100", "US100Cash", "US100Cash#", "US100#", "NAS100", "USTECH", "US100.pro", "US100.m"),
+        aliases=with_micro_forms(("US100", "US100Cash", "US100Cash#", "US100#", "NAS100", "USTECH", "US100.pro", "US100.m")),
         contract_standard=1.0,  # 1 point per lot
         scales_with_account=False,
         pip=1.0,
@@ -239,7 +278,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="S&P 500 Cash",
         group="index",
         yahoo=("^GSPC", "ES=F"),
-        aliases=("US500", "US500Cash", "US500Cash#", "US500#", "SPX500", "US500.pro", "US500.m"),
+        aliases=with_micro_forms(("US500", "US500Cash", "US500Cash#", "US500#", "SPX500", "US500.pro", "US500.m")),
         contract_standard=1.0,  # 1 point per lot
         scales_with_account=False,
         pip=0.1,
@@ -255,7 +294,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="DAX 40 Cash",
         group="index",
         yahoo=("^GDAXI", "FDAX=F"),
-        aliases=("GER40", "GER40Cash", "GER40Cash#", "GER40#", "DE40", "GER30", "GER40.pro", "GER40.m"),
+        aliases=with_micro_forms(("GER40", "GER40Cash", "GER40Cash#", "GER40#", "DE40", "GER30", "GER40.pro", "GER40.m")),
         contract_standard=1.0,  # 1 point per lot
         scales_with_account=False,
         pip=1.0,
@@ -271,7 +310,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Nikkei 225 Cash",
         group="index",
         yahoo=("^N225", "NKD=F"),
-        aliases=("JP225", "JP225Cash", "JP225Cash#", "JP225#", "JPN225", "JP225.pro", "JP225.m"),
+        aliases=with_micro_forms(("JP225", "JP225Cash", "JP225Cash#", "JP225#", "JPN225", "JP225.pro", "JP225.m")),
         contract_standard=100.0,
         scales_with_account=False,
         pip=1.0,
@@ -287,7 +326,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="S&P 500 Volatility Index",
         group="index",
         yahoo=("^VIX", "VX=F"),
-        aliases=("VOLX", "VOLXCash", "VIX", "VOLX#", "VIX#", "VOLX.c", "VIX.c"),
+        aliases=with_micro_forms(("VOLX", "VOLXCash", "VIX", "VOLX#", "VIX#", "VOLX.c", "VIX.c")),
         contract_standard=100.0,
         scales_with_account=False,
         pip=0.01,
@@ -303,7 +342,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="US Dollar Index",
         group="index",
         yahoo=("DX-Y.NYB", "DXY=F"),
-        aliases=("USDX", "USDXCash", "DXY", "USDX#", "DXY#", "USDX.c"),
+        aliases=with_micro_forms(("USDX", "USDXCash", "DXY", "USDX#", "DXY#", "USDX.c")),
         contract_standard=100.0,
         scales_with_account=False,
         pip=0.01,
@@ -377,7 +416,7 @@ def broker_symbol_matches(broker_symbol: str, aliases: tuple[str, ...] | set[str
     return False
 
 
-def aliases_for(spec: Symbol, overrides_text: str) -> tuple[str, ...]:
+def aliases_for(spec: Symbol, overrides_text: str, account_type: str | None = None) -> tuple[str, ...]:
     extra: list[str] = []
     try:
         extra = parse_alias_overrides(overrides_text).get(spec.id, [])
@@ -385,7 +424,12 @@ def aliases_for(spec: Symbol, overrides_text: str) -> tuple[str, ...]:
         extra = []
     # User names first so a custom symbol wins the closest-size sort when tied.
     seen: list[str] = []
-    for name in list(extra) + list(spec.aliases):
+    rest = [name for name in spec.aliases if name not in extra]
+    if account_type == "micro":
+        rest.sort(key=lambda name: (0 if is_micro_symbol_name(name) else 1, len(name), name))
+    elif account_type == "standard":
+        rest.sort(key=lambda name: (0 if not is_micro_symbol_name(name) else 1, len(name), name))
+    for name in list(extra) + rest:
         if name not in seen:
             seen.append(name)
     return tuple(seen)

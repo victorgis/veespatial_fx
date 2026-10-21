@@ -9,7 +9,7 @@
 // Orders are sent only when the website account is set to automatic.
 
 #property copyright "Signal Desk"
-#property version   "1.11"
+#property version   "1.12"
 #property description "Places Signal Desk orders on the XM account this terminal is logged into."
 
 input string ApiBase          = "https://fx.veespatial.com";
@@ -19,12 +19,19 @@ input int    Magic            = 56021;
 input int    SlippagePoints   = 30;
 input int    MaxSpreadPoints  = 40;
 input double MaxLots          = 0; // 0 = no extra ceiling. The website max lot still applies.
-input double BreakEvenProfitUSD = 0; //0.4 Floating profit that moves the stop to the entry price. 0 = off.
-input double LockProfitTriggerUSD = 0; //0.5 Floating profit that locks a winner. 0 = off.
+input double BreakEvenProfitUSD = 4.0; //4.0 Floating profit that moves the stop to the entry price. 0 = off.
+input double LockProfitTriggerUSD = 0; //5.0 Floating profit that locks a winner. 0 = off.
 input double LockProfitUSD = 1.0; // Profit the stop locks in once the trigger is reached.
 input double SpreadWidenRatio = 0.15; // When the spread is this fraction of the stop, push the stop out by the spread.
 
 string LastNote = "Starting.";
+string AccountKind = "";
+
+void ReadAccountKind(const string text)
+{
+   if(StringFind(text, "account_type=micro") >= 0) AccountKind = "micro";
+   else if(StringFind(text, "account_type=standard") >= 0) AccountKind = "standard";
+}
 
 void CheckBreakEven();
 
@@ -110,8 +117,48 @@ bool UseSymbol(const string name)
    if(StringLen(name) < 2) return false;
    if(!SymbolSelect(name, true)) return false;
    long mode = SymbolInfoInteger(name, SYMBOL_TRADE_MODE);
-   if(mode == SYMBOL_TRADE_MODE_DISABLED) return false;
+   // XM micro shows standard names (EURUSD) in Market Watch, but they are
+   // not openable. Only FULL symbols are sent and filled.
+   if(mode != SYMBOL_TRADE_MODE_FULL) return false;
    return (SymbolInfoDouble(name, SYMBOL_ASK) > 0 || SymbolInfoDouble(name, SYMBOL_BID) > 0);
+}
+
+bool LooksMicro(const string name)
+{
+   string n = name;
+   StringToUpper(n);
+   if(StringFind(n, "MICRO") >= 0) return true;
+   int len = StringLen(n);
+   if(len >= 3 && StringFind(n, "M#") == len - 2) return true;
+   if(len >= 3 && StringFind(n, ".M") == len - 2) return true;
+   if(len >= 2 && StringGetCharacter(n, len - 1) == 'M')
+   {
+      ushort prev = StringGetCharacter(n, len - 2);
+      return (prev < '0' || prev > '9');
+   }
+   return false;
+}
+
+bool IsForexName(const string name)
+{
+   if(StringFind(name, "GOLD") >= 0 || StringFind(name, "XAU") >= 0) return false;
+   if(StringFind(name, "OIL") >= 0 || StringFind(name, "BRENT") >= 0 || StringFind(name, "WTI") >= 0) return false;
+   return (StringFind(name, "USD") >= 0 || StringFind(name, "EUR") >= 0 || StringFind(name, "GBP") >= 0);
+}
+
+void NoteFxContract(const string name, const double contract, string &fxName, double &fxContract, string &microName, double &microContract)
+{
+   if(!IsForexName(name) || contract <= 0) return;
+   if(contract >= 500.0 && contract <= 5000.0 && microContract <= 0)
+   {
+      microName = name;
+      microContract = contract;
+   }
+   else if(contract >= 50000.0 && contract <= 200000.0 && fxContract <= 0)
+   {
+      fxName = name;
+      fxContract = contract;
+   }
 }
 
 bool PrefixMatch(const string symbol, const string alias)
@@ -191,6 +238,8 @@ string ResolveSymbol(const string names, const double entry)
    int count = StringSplit(names, ',', options);
    string exact = "";
    string exactCash = "";
+   string exactMicro = "";
+   string exactStd = "";
    for(int i = 0; i < count; i++)
    {
       string candidate = options[i];
@@ -199,8 +248,12 @@ string ResolveSymbol(const string names, const double entry)
       if(candidate == "" || !UseSymbol(candidate)) continue;
       if(exact == "") exact = candidate;
       if(exactCash == "" && StringFind(candidate, "Cash") >= 0) exactCash = candidate;
+      if(exactMicro == "" && LooksMicro(candidate)) exactMicro = candidate;
+      if(exactStd == "" && !LooksMicro(candidate)) exactStd = candidate;
    }
    if(exactCash != "") return exactCash;
+   if(AccountKind == "micro" && exactMicro != "") return exactMicro;
+   if(AccountKind != "micro" && exactStd != "") return exactStd;
    if(exact != "") return exact;
 
    string best = "";
@@ -323,6 +376,8 @@ string Heartbeat()
    };
    string fxName = "";
    double fxContract = 0;
+   string microFxName = "";
+   double microFxContract = 0;
    string specs = "";
    for(int i = 0; i < ArraySize(names); i++)
    {
@@ -331,16 +386,43 @@ string Heartbeat()
       string line = SpecLine(name);
       if(line == "") continue;
       double contract = SymbolInfoDouble(name, SYMBOL_TRADE_CONTRACT_SIZE);
-      if(fxContract <= 0 && (StringFind(name, "USD") >= 0 || StringFind(name, "EUR") >= 0 || StringFind(name, "GBP") >= 0))
+      NoteFxContract(name, contract, fxName, fxContract, microFxName, microFxContract);
+      specs += line;
+   }
+   for(int i = 0; i < ArraySize(names); i++)
+   {
+      string alt = names[i] + ".micro";
+      if(StringFind(specs, "spec=" + alt + "|") >= 0) continue;
+      if(!UseSymbol(alt)) continue;
+      string line = SpecLine(alt);
+      if(line == "") continue;
+      NoteFxContract(alt, SymbolInfoDouble(alt, SYMBOL_TRADE_CONTRACT_SIZE), fxName, fxContract, microFxName, microFxContract);
+      specs += line;
+   }
+   int watched = SymbolsTotal(true);
+   for(int i = 0; i < watched; i++)
+   {
+      string sym = SymbolName(i, true);
+      if(StringFind(specs, "spec=" + sym + "|") >= 0) continue;
+      if(!UseSymbol(sym)) continue;
+      bool hit = LooksMicro(sym);
+      if(!hit)
       {
-         // Prefer a plain FX name over gold or oil for the account-type check.
-         if(StringFind(name, "GOLD") < 0 && StringFind(name, "XAU") < 0 && StringFind(name, "OIL") < 0 && StringFind(name, "BRENT") < 0 && StringFind(name, "WTI") < 0)
+         for(int a = 0; a < ArraySize(names); a++)
          {
-            fxName = name;
-            fxContract = contract;
+            if(sym == names[a] || PrefixMatch(sym, names[a])) { hit = true; break; }
          }
       }
+      if(!hit) continue;
+      string line = SpecLine(sym);
+      if(line == "") continue;
+      NoteFxContract(sym, SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE), fxName, fxContract, microFxName, microFxContract);
       specs += line;
+   }
+   if(microFxContract > 0)
+   {
+      fxName = microFxName;
+      fxContract = microFxContract;
    }
    string roots[] = {"OILCash","BRENTCash","NGASCash","HGCOP","SBEAN","COPPER","SOYBEAN","GOLD","SILVER"};
    for(int r = 0; r < ArraySize(roots); r++)
@@ -796,6 +878,7 @@ void Poll()
       Paint();
       return;
    }
+   ReadAccountKind(response);
    if(StringFind(response, "mismatch=1") >= 0)
       LastNote = "Connected, but the account type on the website does not match this platform. Orders are paused.";
    if(!Http("GET", "/api/ea/orders", "", response, code))
@@ -811,6 +894,7 @@ void Poll()
       return;
    }
    string head = StringSubstr(response, 0, sep);
+   ReadAccountKind(head);
    if(StringFind(head, "mode=auto") < 0)
    {
       LastNote = "Connected. This account is signals only, so nothing will be placed.";

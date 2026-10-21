@@ -412,6 +412,48 @@ def test_oil_order_is_anchored_to_the_mt5_price(client):
     assert float(parts[7]) == pytest.approx(0.0)
 
 
+def test_micro_account_sends_the_micro_symbol_name(client, monkeypatch):
+    _install_market(monkeypatch)
+    headers = _auth(client, "micro-live@example.com")
+    saved = _save(
+        client,
+        headers,
+        trade_mode="auto",
+        account_type="micro",
+        max_lot=50,
+        planning_balance=10000,
+        risk_percent=1,
+    )
+    key = saved["ea_key"]
+    beat = "\n".join(
+        [
+            "platform=mt5",
+            "login=99",
+            "broker=XMTrading-MT5 3",
+            "balance=10000",
+            "equity=10000",
+            "currency=USD",
+            "fx_contract=1000",
+            "fx_symbol=EURUSDmicro",
+            "spec=EURUSD|100000|0.00001|1|0.01|50|0.01|5|1.10000|1.10002",
+            "spec=EURUSDmicro|1000|0.00001|0.01|0.1|100|0.01|5|1.10000|1.10002",
+        ]
+    )
+    heartbeat = client.post("/api/ea/heartbeat", content=beat, headers={"X-Api-Key": key})
+    assert heartbeat.status_code == 200, heartbeat.text
+    assert "mismatch=0" in heartbeat.text
+    assert "account_type=micro" in heartbeat.text
+    scanned = client.post("/api/system/scan", headers=headers)
+    assert scanned.json()["signals_created"] == 1
+    orders = client.get("/api/ea/orders", headers={"X-Api-Key": key})
+    assert "account_type=micro" in orders.text
+    body = [line for line in orders.text.split("---", 1)[1].splitlines() if line.strip()]
+    assert len(body) == 1
+    parts = body[0].split("|")
+    assert parts[2].split(",")[0] == "EURUSDmicro"
+    assert float(parts[6]) == pytest.approx(10.0)
+
+
 def test_order_formatter_and_copier_files():
     from app.ea_proto import OrderOut
 
@@ -435,6 +477,8 @@ def test_order_formatter_and_copier_files():
         assert "WebRequest" in source
         assert "close|" in source
         assert "X-Api-Key" in name or "X-Api-Key" in source
+        assert "LooksMicro" in source
+        assert ".micro" in source
 
 
 def test_download_and_markets(client):
@@ -445,6 +489,9 @@ def test_download_and_markets(client):
     oil = next(row for row in markets.json() if row["id"] == "oil")
     assert oil["mt5_only"] is True
     assert "OILCash" in oil["aliases"]
+    eurusd = next(row for row in markets.json() if row["id"] == "eurusd")
+    assert "EURUSDmicro" in eurusd["aliases"]
+    assert "EURUSD.micro" in eurusd["aliases"]
     brent = next(row for row in markets.json() if row["id"] == "brent")
     assert "BRENTCash" in brent["aliases"]
     downloaded = client.get("/api/downloads/SignalBridge.mq5")

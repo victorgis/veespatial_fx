@@ -4,7 +4,7 @@
 // Allow WebRequest for your desk URL under Tools → Options → Expert Advisors.
 
 #property copyright "Signal Desk"
-#property version   "1.11"
+#property version   "1.12"
 #property strict
 #property description "Places Signal Desk orders on the XM account this terminal is logged into."
 
@@ -15,12 +15,19 @@ input int    Magic            = 56021;
 input int    SlippagePoints   = 30;
 input int    MaxSpreadPoints  = 40;
 input double MaxLots          = 0;
-input double BreakEvenProfitUSD = 4.0; // Floating profit that moves the stop to the entry price. 0 = off.
-input double LockProfitTriggerUSD = 5.0; // Floating profit that locks a winner. 0 = off.
+input double BreakEvenProfitUSD = 4.0; //4.0 Floating profit that moves the stop to the entry price. 0 = off.
+input double LockProfitTriggerUSD = 0; //5.0 Floating profit that locks a winner. 0 = off.
 input double LockProfitUSD = 1.0; // Profit the stop locks in once the trigger is reached.
 input double SpreadWidenRatio = 0.15; // When the spread is this fraction of the stop, push the stop out by the spread.
 
 string LastNote = "Starting.";
+string AccountKind = "";
+
+void ReadAccountKind(string text)
+{
+   if(StringFind(text, "account_type=micro") >= 0) AccountKind = "micro";
+   else if(StringFind(text, "account_type=standard") >= 0) AccountKind = "standard";
+}
 
 void CheckBreakEven();
 
@@ -109,6 +116,44 @@ bool UseSymbol(string name)
    return (MarketInfo(name, MODE_BID) > 0 || MarketInfo(name, MODE_ASK) > 0);
 }
 
+bool LooksMicro(string name)
+{
+   string n = name;
+   StringToUpper(n);
+   if(StringFind(n, "MICRO") >= 0) return true;
+   int len = StringLen(n);
+   if(len >= 3 && StringFind(n, "M#") == len - 2) return true;
+   if(len >= 3 && StringFind(n, ".M") == len - 2) return true;
+   if(len >= 2 && StringGetCharacter(n, len - 1) == 'M')
+   {
+      ushort prev = StringGetCharacter(n, len - 2);
+      return (prev < '0' || prev > '9');
+   }
+   return false;
+}
+
+bool IsForexName(string name)
+{
+   if(StringFind(name, "GOLD") >= 0 || StringFind(name, "XAU") >= 0) return false;
+   if(StringFind(name, "OIL") >= 0 || StringFind(name, "BRENT") >= 0 || StringFind(name, "WTI") >= 0) return false;
+   return (StringFind(name, "USD") >= 0 || StringFind(name, "EUR") >= 0 || StringFind(name, "GBP") >= 0);
+}
+
+void NoteFxContract(string name, double contract, string &fxName, double &fxContract, string &microName, double &microContract)
+{
+   if(!IsForexName(name) || contract <= 0) return;
+   if(contract >= 500.0 && contract <= 5000.0 && microContract <= 0)
+   {
+      microName = name;
+      microContract = contract;
+   }
+   else if(contract >= 50000.0 && contract <= 200000.0 && fxContract <= 0)
+   {
+      fxName = name;
+      fxContract = contract;
+   }
+}
+
 bool PrefixMatch(string symbol, string alias)
 {
    if(StringLen(alias) < 4) return false;
@@ -136,6 +181,8 @@ string ResolveSymbol(string names, double entry)
    int count = StringSplit(names, ',', options);
    string exact = "";
    string exactCash = "";
+   string exactMicro = "";
+   string exactStd = "";
    for(int i = 0; i < count; i++)
    {
       string candidate = options[i];
@@ -144,8 +191,12 @@ string ResolveSymbol(string names, double entry)
       if(candidate == "" || !UseSymbol(candidate)) continue;
       if(exact == "") exact = candidate;
       if(exactCash == "" && StringFind(candidate, "Cash") >= 0) exactCash = candidate;
+      if(exactMicro == "" && LooksMicro(candidate)) exactMicro = candidate;
+      if(exactStd == "" && !LooksMicro(candidate)) exactStd = candidate;
    }
    if(exactCash != "") return exactCash;
+   if(AccountKind == "micro" && exactMicro != "") return exactMicro;
+   if(AccountKind != "micro" && exactStd != "") return exactStd;
    if(exact != "") return exact;
    for(int pass = 0; pass < 2; pass++)
    {
@@ -220,6 +271,8 @@ string Heartbeat()
    };
    string fxName = "";
    double fxContract = 0;
+   string microFxName = "";
+   double microFxContract = 0;
    string specs = "";
    for(int i = 0; i < ArraySize(names); i++)
    {
@@ -229,11 +282,7 @@ string Heartbeat()
       double tickSize = MarketInfo(name, MODE_TICKSIZE);
       double tickValue = MarketInfo(name, MODE_TICKVALUE);
       if(contract <= 0 || tickSize <= 0) continue;
-      if(fxContract <= 0 && StringFind(name, "GOLD") < 0 && StringFind(name, "XAU") < 0 && StringFind(name, "OIL") < 0 && StringFind(name, "BRENT") < 0)
-      {
-         fxName = name;
-         fxContract = contract;
-      }
+      NoteFxContract(name, contract, fxName, fxContract, microFxName, microFxContract);
       int digits = (int)MarketInfo(name, MODE_DIGITS);
       specs += "spec=" + name
          + "|" + DoubleToString(contract, 2)
@@ -246,6 +295,67 @@ string Heartbeat()
          + "|" + DoubleToString(MarketInfo(name, MODE_BID), digits)
          + "|" + DoubleToString(MarketInfo(name, MODE_ASK), digits)
          + "\n";
+   }
+   for(int i = 0; i < ArraySize(names); i++)
+   {
+      string alt = names[i] + ".micro";
+      if(StringFind(specs, "spec=" + alt + "|") >= 0) continue;
+      if(!UseSymbol(alt)) continue;
+      double contract = MarketInfo(alt, MODE_LOTSIZE);
+      double tickSize = MarketInfo(alt, MODE_TICKSIZE);
+      double tickValue = MarketInfo(alt, MODE_TICKVALUE);
+      if(contract <= 0 || tickSize <= 0) continue;
+      NoteFxContract(alt, contract, fxName, fxContract, microFxName, microFxContract);
+      int digits = (int)MarketInfo(alt, MODE_DIGITS);
+      specs += "spec=" + alt
+         + "|" + DoubleToString(contract, 2)
+         + "|" + DoubleToString(tickSize, 8)
+         + "|" + DoubleToString(tickValue, 6)
+         + "|" + DoubleToString(MarketInfo(alt, MODE_MINLOT), 2)
+         + "|" + DoubleToString(MarketInfo(alt, MODE_MAXLOT), 2)
+         + "|" + DoubleToString(MarketInfo(alt, MODE_LOTSTEP), 2)
+         + "|" + IntegerToString(digits)
+         + "|" + DoubleToString(MarketInfo(alt, MODE_BID), digits)
+         + "|" + DoubleToString(MarketInfo(alt, MODE_ASK), digits)
+         + "\n";
+   }
+   int watched = SymbolsTotal(true);
+   for(int i = 0; i < watched; i++)
+   {
+      string sym = SymbolName(i, true);
+      if(StringFind(specs, "spec=" + sym + "|") >= 0) continue;
+      if(!UseSymbol(sym)) continue;
+      bool hit = LooksMicro(sym);
+      if(!hit)
+      {
+         for(int a = 0; a < ArraySize(names); a++)
+         {
+            if(sym == names[a] || PrefixMatch(sym, names[a])) { hit = true; break; }
+         }
+      }
+      if(!hit) continue;
+      double contract = MarketInfo(sym, MODE_LOTSIZE);
+      double tickSize = MarketInfo(sym, MODE_TICKSIZE);
+      double tickValue = MarketInfo(sym, MODE_TICKVALUE);
+      if(contract <= 0 || tickSize <= 0) continue;
+      NoteFxContract(sym, contract, fxName, fxContract, microFxName, microFxContract);
+      int digits = (int)MarketInfo(sym, MODE_DIGITS);
+      specs += "spec=" + sym
+         + "|" + DoubleToString(contract, 2)
+         + "|" + DoubleToString(tickSize, 8)
+         + "|" + DoubleToString(tickValue, 6)
+         + "|" + DoubleToString(MarketInfo(sym, MODE_MINLOT), 2)
+         + "|" + DoubleToString(MarketInfo(sym, MODE_MAXLOT), 2)
+         + "|" + DoubleToString(MarketInfo(sym, MODE_LOTSTEP), 2)
+         + "|" + IntegerToString(digits)
+         + "|" + DoubleToString(MarketInfo(sym, MODE_BID), digits)
+         + "|" + DoubleToString(MarketInfo(sym, MODE_ASK), digits)
+         + "\n";
+   }
+   if(microFxContract > 0)
+   {
+      fxName = microFxName;
+      fxContract = microFxContract;
    }
    return "platform=mt4\n"
       + "login=" + IntegerToString(AccountNumber()) + "\n"
@@ -571,6 +681,7 @@ void Poll()
       Paint();
       return;
    }
+   ReadAccountKind(response);
    if(!Http("GET", "/api/ea/orders", "", response, code))
    {
       Paint();
@@ -584,6 +695,7 @@ void Poll()
       return;
    }
    string head = StringSubstr(response, 0, sep);
+   ReadAccountKind(head);
    if(StringFind(head, "mode=auto") < 0)
    {
       LastNote = "Connected. This account is signals only, so nothing will be placed.";

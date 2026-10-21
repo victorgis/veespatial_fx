@@ -2,9 +2,9 @@ import pytest
 
 from app.ea_proto import parse_execution
 from app.models import BrokerSpec, Settings
-from app.quotes import _pick_spec
+from app.quotes import _pick_spec, account_for_names
 from app.sizing import chase_for, chase_limit, lots_from_contract, lots_from_ticks, rebase_levels
-from app.symbols import aliases_for, broker_symbol_matches, get_symbol, parse_alias_overrides
+from app.symbols import aliases_for, broker_symbol_matches, get_symbol, is_micro_symbol_name, parse_alias_overrides
 from app.wording import status_line
 
 
@@ -112,6 +112,50 @@ def test_xm_commodity_names_match_month_codes():
     assert not broker_symbol_matches("EURUSD", aliases_for(copper, ""))
 
 
+def test_xm_micro_names_are_aliases():
+    spec = get_symbol("eurusd")
+    gold = get_symbol("gold")
+    assert spec is not None and gold is not None
+    names = aliases_for(spec, "")
+    assert "EURUSDmicro" in names
+    assert "EURUSD.micro" in names
+    assert "EURUSDm" in names
+    gold_names = aliases_for(gold, "")
+    assert "GOLDmicro" in gold_names
+    assert "GOLD.micro" in gold_names
+    assert is_micro_symbol_name("EURUSDmicro")
+    assert is_micro_symbol_name("EURUSD.micro")
+    assert is_micro_symbol_name("EURUSDm")
+    assert not is_micro_symbol_name("EURUSD")
+    micro_first = aliases_for(spec, "", "micro")
+    assert is_micro_symbol_name(micro_first[0])
+
+
+def test_pick_spec_prefers_micro_symbol_on_a_micro_account():
+    spec = get_symbol("eurusd")
+    assert spec is not None
+    settings = Settings(user_id=1, account_type="micro", alias_overrides="")
+    rows = [
+        BrokerSpec(
+            user_id=1, broker_symbol="EURUSD", contract_size=100_000, tick_size=0.00001,
+            tick_value=1, min_lot=0.01, max_lot=50, lot_step=0.01, digits=5, bid=1.1, ask=1.1002,
+        ),
+        BrokerSpec(
+            user_id=1, broker_symbol="EURUSDmicro", contract_size=1000, tick_size=0.00001,
+            tick_value=0.01, min_lot=0.1, max_lot=100, lot_step=0.01, digits=5, bid=1.1, ask=1.1002,
+        ),
+    ]
+    picked = _pick_spec(rows, spec, settings)
+    assert picked is not None
+    assert picked.broker_symbol == "EURUSDmicro"
+
+    settings.account_type = "standard"
+    settings.fx_contract = 100_000
+    picked = _pick_spec(rows, spec, settings)
+    assert picked is not None
+    assert picked.broker_symbol == "EURUSD"
+
+
 def test_cash_symbol_beats_the_futures_month():
     spec = get_symbol("ngas")
     assert spec is not None
@@ -143,6 +187,20 @@ def test_alias_override_rejects_unknown_markets():
         parse_alias_overrides("not-a-market=EURUSD")
     parsed = parse_alias_overrides("oil=OILCash.pro\n# comment\n")
     assert parsed["oil"] == ["OILCash.pro"]
+
+
+def test_account_for_names_follows_the_copier_when_known():
+    settings = Settings(user_id=1, account_type="micro", alias_overrides="")
+    assert account_for_names(settings) == "micro"
+    settings.fx_contract = 1000
+    assert account_for_names(settings) == "micro"
+    settings.account_type = "standard"
+    settings.fx_contract = 100_000
+    assert account_for_names(settings) == "standard"
+    settings.trust_platform_size = True
+    settings.account_type = "standard"
+    settings.fx_contract = 1000
+    assert account_for_names(settings) == "micro"
 
 
 def test_status_sentences():

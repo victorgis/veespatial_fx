@@ -93,7 +93,7 @@ def parse_heartbeat(body: str) -> HeartbeatIn:
         currency=(fields.get("currency") or "USD")[:8],
         fx_contract=fx_contract,
         fx_symbol=(fields.get("fx_symbol") or None),
-        specs=specs[:60],
+        specs=specs[:120],
     )
 
 

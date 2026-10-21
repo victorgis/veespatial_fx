@@ -16,7 +16,14 @@ from app.sizing import (
     lots_from_ticks,
     rebase_levels,
 )
-from app.symbols import Symbol, aliases_for, broker_symbol_matches, contract_size_for, get_symbol
+from app.symbols import (
+    Symbol,
+    aliases_for,
+    broker_symbol_matches,
+    contract_size_for,
+    get_symbol,
+    is_micro_symbol_name,
+)
 from app.wording import copy_text, mismatch_message
 
 
@@ -58,18 +65,36 @@ def account_mismatch(settings: Settings) -> tuple[bool, str | None]:
     return True, mismatch_message(settings.account_type, detected, settings.fx_symbol, settings.fx_contract)
 
 
+def account_for_names(settings: Settings) -> str:
+    """Which XM name set to use: the copier's contract when it is known, else the website choice."""
+    detected = detect_account_type(settings.fx_contract)
+    if detected and (settings.trust_platform_size or detected == settings.account_type):
+        return detected
+    return settings.account_type
+
+
+def _name_rank(broker_symbol: str, account_type: str) -> int:
+    micro = is_micro_symbol_name(broker_symbol)
+    if account_type == "micro":
+        return 0 if micro else 1
+    return 0 if not micro else 1
+
+
 def _pick_spec(rows: list[BrokerSpec], spec: Symbol, settings: Settings) -> BrokerSpec | None:
-    names = aliases_for(spec, settings.alias_overrides)
+    kind = account_for_names(settings)
+    names = aliases_for(spec, settings.alias_overrides, kind)
     matches = [r for r in rows if broker_symbol_matches(r.broker_symbol, names)]
     if not matches:
         return None
-    target = contract_size_for(spec, settings.account_type)
+    target = contract_size_for(spec, kind)
     # Cash CFDs (OILCash, NGASCash) are the markets the desk signals.
     # A futures month with the same contract size must not win the tie.
+    # On XM micro, EURUSD is often visible but untradeable; EURUSDmicro is the fill.
     matches.sort(
         key=lambda r: (
             0 if "CASH" in r.broker_symbol.upper() else 1,
             abs(r.contract_size - target),
+            _name_rank(r.broker_symbol, kind),
             len(r.broker_symbol),
             r.broker_symbol,
         )
@@ -137,7 +162,8 @@ def build_quote(
     rows = broker_specs if broker_specs is not None else db.query(BrokerSpec).filter(BrokerSpec.user_id == settings.user_id).all()
     live = _pick_spec(rows, spec, settings)
     mismatch, mismatch_text = account_mismatch(settings)
-    conflict = bool(live and _spec_conflicts(live, spec, settings.account_type) and not settings.trust_platform_size)
+    kind = account_for_names(settings)
+    conflict = bool(live and _spec_conflicts(live, spec, kind) and not settings.trust_platform_size)
     blocked = mismatch or conflict
 
     chosen: LotResult
