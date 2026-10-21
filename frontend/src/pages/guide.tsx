@@ -92,8 +92,8 @@ export function Guide() {
           <h2>Place a signal by hand</h2>
           <ol className="guide">
             <li>Read the entry, the 50-pip stop, and the lot size for your account type. Copy levels puts them on the clipboard. There is no take profit.</li>
-            <li>On a standard account, 1 forex lot is 100,000. On a micro account it is 1,000, so the lot number is 100 times larger for the same position.</li>
-            <li>For gold, XM uses the same 100× relationship (100 ounces versus 1 ounce). For OILCash and BRENTCash, 1 lot is 100 barrels on both.</li>
+            <li>On a standard account, 1 forex lot is 100,000. On a micro account it is 1,000, so the lot number is 100 times larger for the same position. XM Ultra Low Micro names end in m# (EURUSDm#, GOLDm#). Ordinary Micro names end in micro.</li>
+            <li>For gold, XM uses the same 100× relationship (100 ounces versus 1 ounce). Indices such as US30Cash# keep the same contract on micro and standard. For OILCash and BRENTCash, 1 lot is 100 barrels on both.</li>
             <li>If the card says the minimum lot would risk more than your limit, skip the trade.</li>
           </ol>
         </article>

@@ -4,7 +4,7 @@
 // Allow WebRequest for your desk URL under Tools → Options → Expert Advisors.
 
 #property copyright "Signal Desk"
-#property version   "1.12"
+#property version   "1.13"
 #property strict
 #property description "Places Signal Desk orders on the XM account this terminal is logged into."
 
@@ -254,18 +254,18 @@ string Heartbeat()
       "EURGBP","EURGBPm","EURGBPmicro","EURGBP#","EURGBPm#",
       "EURJPY","EURJPYm","EURJPYmicro","EURJPY#","EURJPYm#",
       "GBPJPY","GBPJPYm","GBPJPYmicro","GBPJPY#","GBPJPYm#",
-      "GOLD","GOLD#","XAUUSD","XAUUSD#","GOLDmicro","GOLDm#",
+      "GOLD","GOLD#","XAUUSD","XAUUSD#","GOLDmicro","GOLDm#","GOLDm","XAUUSDm#",
       "SILVER","SILVER#","XAGUSD","XAGUSD#","SILVERmicro","SILVERm#","SILVERm",
       "OILCash","OILCash#","OILCash.m","USOIL","WTI","WTIOILCash","XTIUSD",
       "BRENTCash","BRENTCash#","BRENTCash.m","UKOIL","XBRUSD",
       "HGCOP","HGCOP#","COPPER","COPPER#","COPPERCash","COPPERCash#","HGCOPPER",
       "NGASCash","NGASCash#","NATGASCash","NGAS","NGAS#","NATGAS","NGAS.c",
       "SBEAN","SBEAN#","SOYBEAN","SOYBEAN#","SOYBEANCash","SOYBEANCash#","SOY",
-      "US30","US30Cash","US30Cash#","US30#","DJ30","USA30","US30.pro","US30.m","WS30",
-      "US100","US100Cash","US100Cash#","US100#","NAS100","USTECH","US100.pro","US100.m",
-      "US500","US500Cash","US500Cash#","US500#","SPX500","US500.pro","US500.m",
-      "GER40","GER40Cash","GER40Cash#","GER40#","DE40","GER30","GER40.pro","GER40.m",
-      "JP225","JP225Cash","JP225Cash#","JP225#","JPN225","JP225.pro","JP225.m",
+      "US30","US30Cash","US30Cash#","US30#","DJ30","USA30","US30.pro","US30.m","US30m#","US30Cashm#","WS30",
+      "US100","US100Cash","US100Cash#","US100#","NAS100","USTECH","US100.pro","US100.m","US100m#","US100Cashm#",
+      "US500","US500Cash","US500Cash#","US500#","SPX500","US500.pro","US500.m","US500m#","US500Cashm#",
+      "GER40","GER40Cash","GER40Cash#","GER40#","DE40","GER30","GER40.pro","GER40.m","GER40m#","GER40Cashm#",
+      "JP225","JP225Cash","JP225Cash#","JP225#","JPN225","JP225.pro","JP225.m","JP225m#","JP225Cashm#",
       "VOLX","VOLXCash","VOLXCash#","VIX","VOLX#","VIX#","VOLX.c","VIX.c",
       "USDX","USDXCash","USDXCash#","DXY","USDX#","DXY#","USDX.c"
    };

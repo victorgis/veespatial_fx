@@ -454,6 +454,51 @@ def test_micro_account_sends_the_micro_symbol_name(client, monkeypatch):
     assert float(parts[6]) == pytest.approx(10.0)
 
 
+def test_ultra_low_micro_sends_the_m_hash_symbol_name(client, monkeypatch):
+    _install_market(monkeypatch)
+    headers = _auth(client, "ultra-micro@example.com")
+    saved = _save(
+        client,
+        headers,
+        trade_mode="auto",
+        account_type="micro",
+        max_lot=50,
+        planning_balance=10000,
+        risk_percent=1,
+    )
+    key = saved["ea_key"]
+    beat = "\n".join(
+        [
+            "platform=mt5",
+            "login=77",
+            "broker=XMTrading-MT5 3",
+            "balance=10000",
+            "equity=10000",
+            "currency=USD",
+            "fx_contract=1000",
+            "fx_symbol=EURUSDm#",
+            "spec=EURUSD#|100000|0.00001|1|0.01|50|0.01|5|1.10000|1.10002",
+            "spec=EURUSDm#|1000|0.00001|0.01|0.1|100|0.01|5|1.10000|1.10002",
+            "spec=GOLD#|100|0.01|1|0.01|50|0.01|2|4140|4140.30",
+            "spec=GOLDm#|1|0.01|0.01|0.1|100|0.01|2|4140|4140.30",
+            "spec=US30Cash#|1|1|1|0.1|50|0.01|2|52620|52622",
+        ]
+    )
+    heartbeat = client.post("/api/ea/heartbeat", content=beat, headers={"X-Api-Key": key})
+    assert heartbeat.status_code == 200, heartbeat.text
+    assert "mismatch=0" in heartbeat.text
+    assert "account_type=micro" in heartbeat.text
+    scanned = client.post("/api/system/scan", headers=headers)
+    assert scanned.json()["signals_created"] == 1
+    orders = client.get("/api/ea/orders", headers={"X-Api-Key": key})
+    assert "account_type=micro" in orders.text
+    body = [line for line in orders.text.split("---", 1)[1].splitlines() if line.strip()]
+    assert len(body) == 1
+    parts = body[0].split("|")
+    assert parts[2].split(",")[0] == "EURUSDm#"
+    assert float(parts[6]) == pytest.approx(10.0)
+
+
 def test_order_formatter_and_copier_files():
     from app.ea_proto import OrderOut
 
@@ -492,6 +537,7 @@ def test_download_and_markets(client):
     eurusd = next(row for row in markets.json() if row["id"] == "eurusd")
     assert "EURUSDmicro" in eurusd["aliases"]
     assert "EURUSD.micro" in eurusd["aliases"]
+    assert "EURUSDm#" in eurusd["aliases"]
     brent = next(row for row in markets.json() if row["id"] == "brent")
     assert "BRENTCash" in brent["aliases"]
     downloaded = client.get("/api/downloads/SignalBridge.mq5")
@@ -499,7 +545,7 @@ def test_download_and_markets(client):
     assert "WebRequest" in downloaded.text
     assert "LooksMicro" in downloaded.text
     assert "no-store" in downloaded.headers.get("cache-control", "")
-    assert downloaded.headers.get("x-copier-version") == "1.12"
+    assert downloaded.headers.get("x-copier-version") == "1.13"
     assert "attachment" in downloaded.headers.get("content-disposition", "")
     assert "etag" not in downloaded.headers
     assert client.get("/api/health").json()["ok"] is True

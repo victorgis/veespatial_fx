@@ -14,7 +14,8 @@ from dataclasses import dataclass
 
 
 _ALIAS = re.compile(r"^[A-Za-z0-9._#]{2,32}$")
-# XM micro names: EURUSDmicro, EURUSD.micro, EURUSDm, EURUSDm#.
+# XM names: Standard (EURUSD), Micro (EURUSDmicro), Ultra Low Standard (EURUSD#),
+# Ultra Low Micro (EURUSDm#). A trailing # alone is the low-spread standard book.
 _XM_SUFFIXES = ("", "micro", ".micro", "m", "m#", "#", ".", ".m")
 
 
@@ -61,17 +62,23 @@ def with_micro_forms(aliases: tuple[str, ...]) -> tuple[str, ...]:
     for name in aliases:
         extra.append(name + "micro")
         extra.append(name + ".micro")
+        extra.append(name + "m")
+        extra.append(name + "m#")
     return tuple(dict.fromkeys((*aliases, *extra)))
 
 
 def is_micro_symbol_name(name: str) -> bool:
-    """True for XM micro spellings such as EURUSDmicro, EURUSD.micro, EURUSDm#."""
+    """True for XM micro spellings such as EURUSDmicro, EURUSD.micro, EURUSDm, EURUSDm#.
+
+    A trailing # alone is Ultra Low Standard (EURUSD#, GOLD#, US30Cash#), not micro.
+    Ultra Low Micro uses m# (EURUSDm#, GOLDm#).
+    """
     token = (name or "").upper()
     if not token:
         return False
     if "MICRO" in token:
         return True
-    if token.endswith("M#") or token.endswith("#"): #.M
+    if token.endswith("M#") or token.endswith(".M") or token.endswith(".M#"):
         return True
     if token.endswith("M") and len(token) >= 2 and not token[-2].isdigit():
         return True
@@ -126,7 +133,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Gold vs US dollar",
         group="metal",
         yahoo=("GC=F", "XAUUSD=X"),
-        aliases=xm_names("GOLD", "XAUUSD", "GOLDm#"),
+        aliases=xm_names("GOLD", "XAUUSD"),
         contract_standard=100,  # troy ounces
         scales_with_account=True,
         pip=0.01,
@@ -134,7 +141,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         unit="oz",
         quote_mode="usd",
         mt5_only=False,
-        note="On XM, standard gold is usually named GOLD (100 oz) and micro gold GOLDmicro (1 oz).",
+        note="On XM, standard gold is GOLD or GOLD# (100 oz) and micro gold is GOLDmicro or GOLDm# (1 oz).",
         feed="XAUUSD",
         price_divisor=1000,
     ),
@@ -144,7 +151,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Silver vs US dollar",
         group="metal",
         yahoo=("SI=F", "XAGUSD=X"),
-        aliases=xm_names("SILVER", "SILVERCash", "XAGUSD", "SILVERm#"),
+        aliases=xm_names("SILVER", "SILVERCash", "XAGUSD"),
         contract_standard=5000,  # troy ounces
         scales_with_account=True,
         pip=0.01,
@@ -363,6 +370,11 @@ def get_symbol(symbol_id: str) -> Symbol | None:
 
 
 def contract_size_for(spec: Symbol, account_type: str) -> float:
+    """XM lot size: 100,000 on standard / Ultra Low Standard, 1,000 on micro / Ultra Low Micro.
+
+    Gold follows the same 100× split (100 oz vs 1 oz). Markets with
+    scales_with_account=False keep one contract on both books.
+    """
     if account_type == "micro" and spec.scales_with_account:
         return spec.contract_standard / 100.0
     return spec.contract_standard

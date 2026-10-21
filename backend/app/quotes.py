@@ -154,15 +154,16 @@ def build_quote(
     if rates is None:
         rates = converters(db)
     # Comparison figures are the uncapped risk size, so standard vs micro stays honest.
+    # Standard FX is 100,000 units per lot; micro (including Ultra Low m#) is 1,000.
+    kind = account_for_names(settings)
     standard = lots_from_contract(spec, "standard", risk_cash, entry, sl, settings.platform, 1_000_000, currency, rates)
     micro = lots_from_contract(spec, "micro", risk_cash, entry, sl, settings.platform, 1_000_000, currency, rates)
     own = lots_from_contract(
-        spec, settings.account_type, risk_cash, entry, sl, settings.platform, settings.max_lot, currency, rates
+        spec, kind, risk_cash, entry, sl, settings.platform, settings.max_lot, currency, rates
     )
     rows = broker_specs if broker_specs is not None else db.query(BrokerSpec).filter(BrokerSpec.user_id == settings.user_id).all()
     live = _pick_spec(rows, spec, settings)
     mismatch, mismatch_text = account_mismatch(settings)
-    kind = account_for_names(settings)
     conflict = bool(live and _spec_conflicts(live, spec, kind) and not settings.trust_platform_size)
     blocked = mismatch or conflict
 
@@ -194,7 +195,8 @@ def build_quote(
     if blocked:
         warning = mismatch_text or (
             f"{live.broker_symbol if live else spec.display} on your platform does not match a "
-            f"{settings.account_type} contract. Automatic orders for this market are paused."
+            f"{kind} contract (1 lot = {'1,000' if kind == 'micro' else '100,000'}). "
+            "Automatic orders for this market are paused."
         )
 
     # Manual traders still need a number to type. Automatic sending is what pauses.
@@ -211,7 +213,7 @@ def build_quote(
         too_small = chosen.too_small
         approximate = chosen.approximate
 
-    text = copy_text(spec, side, entry, sl, tp, settings.account_type, lots, units, risk_cash, currency, reason if lots is None else None)
+    text = copy_text(spec, side, entry, sl, tp, kind, lots, units, risk_cash, currency, reason if lots is None else None)
     if warning and lots is not None:
         text = text + "\n" + warning
     return Quote(
