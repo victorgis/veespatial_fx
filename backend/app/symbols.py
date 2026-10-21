@@ -65,13 +65,13 @@ def with_micro_forms(aliases: tuple[str, ...]) -> tuple[str, ...]:
 
 
 def is_micro_symbol_name(name: str) -> bool:
-    """True for XM micro spellings such as EURUSDmicro, EURUSD.micro, EURUSDm."""
+    """True for XM micro spellings such as EURUSDmicro, EURUSD.micro, EURUSDm#."""
     token = (name or "").upper()
     if not token:
         return False
     if "MICRO" in token:
         return True
-    if token.endswith("M#") or token.endswith(".M"):
+    if token.endswith("M#") or token.endswith("#"): #.M
         return True
     if token.endswith("M") and len(token) >= 2 and not token[-2].isdigit():
         return True
@@ -126,7 +126,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Gold vs US dollar",
         group="metal",
         yahoo=("GC=F", "XAUUSD=X"),
-        aliases=xm_names("GOLD", "XAUUSD"),
+        aliases=xm_names("GOLD", "XAUUSD", "GOLDm#"),
         contract_standard=100,  # troy ounces
         scales_with_account=True,
         pip=0.01,
@@ -144,7 +144,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="Silver vs US dollar",
         group="metal",
         yahoo=("SI=F", "XAGUSD=X"),
-        aliases=xm_names("SILVER", "SILVERCash", "XAGUSD"),
+        aliases=xm_names("SILVER", "SILVERCash", "XAGUSD", "SILVERm#"),
         contract_standard=5000,  # troy ounces
         scales_with_account=True,
         pip=0.01,
@@ -198,7 +198,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="High Grade Copper",
         group="commodity",
         yahoo=("HG=F",),
-        aliases=with_micro_forms(("HGCOP", "HGCOP#", "COPPER", "COPPER#", "COPPERCash", "COPPERCash#", "HGCOPPER", "COPPER.c")),
+        aliases=with_micro_forms(("HGCOP", "HGCOP#", "COPPER", "COPPER#", "COPPERCash", "COPPERCash#", "HGCOPPER", "COPPER.c", "COPPERm#")),
         contract_standard=2000,  # lbs. XM's HGCOP contract is 2,000 lbs.
         scales_with_account=False,
         pip=0.001,
@@ -230,7 +230,7 @@ SYMBOLS: tuple[Symbol, ...] = (
         pair="US Soybeans",
         group="commodity",
         yahoo=("ZS=F",),
-        aliases=with_micro_forms(("SBEAN", "SBEAN#", "SOYBEAN", "SOYBEAN#", "SOYBEANCash", "SOYBEANCash#", "SOYBEAN.c", "SOY")),
+        aliases=with_micro_forms(("SBEAN", "SBEAN#", "SOYBEAN", "SOYBEAN#", "SOYBEANCash", "SOYBEANCash#", "SOYBEAN.c", "SOY", "SOYBEANm#")),
         contract_standard=400,  # bushels. XM's SBEAN contract is 400 bushels.
         scales_with_account=False,
         pip=0.01,
