@@ -12,7 +12,7 @@ from app.symbols import (
     is_micro_symbol_name,
     parse_alias_overrides,
 )
-from app.wording import status_line
+from app.wording import status_line, telegram_message
 
 
 def test_fx_micro_is_one_hundred_times_standard():
@@ -59,6 +59,35 @@ def test_usdjpy_divides_by_price():
     assert spec is not None
     sized = lots_from_contract(spec, "standard", 100, 150, 149.5, "mt5", 100, "USD")
     assert sized.lots == pytest.approx(0.30)
+
+
+def test_gbpjpy_names_the_size_that_falls_under_the_minimum():
+    # 50 pips on GBPJPYm#, tick 0.001 worth about 0.006323 USD. 1% of 26.12 is 0.26.
+    # The formula wants 0.08 lots. XM's minimum is 0.10, which risks about 0.32.
+    sized = lots_from_ticks(0.2612, 0.500, 0.001, 0.006323, 1000, 0.10, 0.01, 20, "USD")
+    assert sized.lots is None
+    assert sized.too_small is True
+    assert "0.08 lots" in (sized.reason or "")
+    assert "0.10 lots" in (sized.reason or "")
+    assert "0.32" in (sized.reason or "")
+    assert "Nothing will be placed automatically" in (sized.reason or "")
+
+
+def test_gbpjpy_telegram_shows_the_micro_size_without_cancelling_it():
+    spec = get_symbol("gbpjpy")
+    assert spec is not None
+    rates = {"usdjpy": 158.135}
+    standard = lots_from_contract(spec, "standard", 0.50, 211.803, 211.303, "mt5", 100, "USD", rates)
+    micro = lots_from_contract(spec, "micro", 0.50, 211.803, 211.303, "mt5", 10_000, "USD", rates)
+    assert standard.lots is None
+    assert micro.lots == pytest.approx(0.15)
+    text = telegram_message(spec, "buy", 211.803, 211.303, 0.0, standard, micro, 130, 50, 1)
+    assert "Size for 1% risk on a 50 USD balance" in text
+    assert "Micro (1 lot = 1,000)  0.15 lots" in text
+    assert "0.01 lots" in text
+    assert "Nothing will be placed automatically" not in text
+    micro_at = text.index("Micro (1 lot = 1,000)")
+    assert "0.15 lots" in text[micro_at:micro_at + 40]
 
 
 def test_min_lot_is_not_rounded_up_past_the_risk():

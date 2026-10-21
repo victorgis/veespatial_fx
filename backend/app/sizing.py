@@ -119,6 +119,15 @@ def _finish(
         stepped = min(stepped, floor_to_step(max_lot, lot_step))
     min_risk = loss_per_lot * min_lot
     if stepped < min_lot:
+        if stepped > 0:
+            opening = (
+                f"This risk works out to {stepped:.2f} lots, below the smallest order of {min_lot:.2f} lots. "
+                f"That order would risk about {min_risk:.2f} {currency}, "
+            )
+        else:
+            opening = (
+                f"The smallest order is {min_lot:.2f} lots and would risk about {min_risk:.2f} {currency}, "
+            )
         return LotResult(
             None,
             None,
@@ -128,8 +137,8 @@ def _finish(
             min_lot,
             min_risk,
             (
-                f"The smallest order is {min_lot:.2f} lots and would risk about "
-                f"{min_risk:.2f} {currency}, above your {risk_cash:.2f} {currency} limit. "
+                opening
+                + f"above your {risk_cash:.2f} {currency} limit. "
                 "Nothing will be placed automatically."
             ),
             approximate,

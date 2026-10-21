@@ -52,6 +52,22 @@ def _fmt_lots(value: float | None) -> str:
     return f"{value:.2f}"
 
 
+def _example_miss(result: LotResult) -> str:
+    """Why this shared example has no lot. It is not an order on anyone's account."""
+    if result.min_risk is not None:
+        return (
+            f"No size in this example. The smallest order is {result.min_lot:.2f} lots "
+            f"and would risk about {result.min_risk:.2f}, above {result.risk_cash:.2f}."
+        )
+    return result.reason or "No size in this example."
+
+
+def _example_line(label: str, result: LotResult) -> str:
+    if result.lots is None:
+        return f"{label}  {_example_miss(result)}"
+    return f"{label}  {_fmt_lots(result.lots)} lots"
+
+
 def telegram_message(
     spec: Symbol,
     side: str,
@@ -75,22 +91,20 @@ def telegram_message(
         f"Stop    {_fmt_price(sl, spec.digits)}",
         "Target  none. Exit on the opposite ICWR signal." if tp == 0 else f"Target  {_fmt_price(tp, spec.digits)}",
         "",
-        f"Size for {risk_percent:g}% risk on {balance:,.0f}",
+        f"Size for {risk_percent:g}% risk on a {balance:,.0f} USD balance",
     ]
     if spec.scales_with_account:
-        lines.append(f"Standard (1 lot = 100,000)  {_fmt_lots(standard.lots)} lots")
-        lines.append(f"Micro (1 lot = 1,000)       {_fmt_lots(micro.lots)} lots")
-        if standard.lots is None and standard.reason:
-            lines.append(standard.reason)
+        lines.append(_example_line("Standard (1 lot = 100,000)", standard))
+        lines.append(_example_line("Micro (1 lot = 1,000)", micro))
     else:
-        if spec.group == "index":
+        if standard.lots is None:
+            lines.append(_example_miss(standard))
+        elif spec.group == "index":
             lines.append(f"{_fmt_lots(standard.lots)} lots.")
         else:
             lines.append(
                 f"{_fmt_lots(standard.lots)} lots. On XM, 1 lot is {spec.contract_standard:g} {spec.unit}."
             )
-        if standard.lots is None and standard.reason:
-            lines.append(standard.reason)
     if spec.mt5_only:
         lines.append("XM lists this cash market on MT5.")
     lines += [
