@@ -3,7 +3,7 @@ import pytest
 from app.ea_proto import parse_execution
 from app.models import BrokerSpec, Settings
 from app.quotes import _pick_spec, account_for_names, build_quote
-from app.sizing import chase_for, chase_limit, lots_from_contract, lots_from_ticks, rebase_levels
+from app.sizing import chase_for, chase_limit, lots_from_contract, lots_from_ticks, rebase_levels, repair_tick_value
 from app.symbols import (
     aliases_for,
     broker_symbol_matches,
@@ -338,6 +338,21 @@ def test_account_for_names_follows_the_copier_when_known():
     settings.account_type = "standard"
     settings.fx_contract = 1000
     assert account_for_names(settings) == "micro"
+
+
+def test_zero_tick_value_on_a_standard_book_is_rebuilt():
+    # EURUSD, account USD: 100,000 * 0.00001 = $1 a tick.
+    assert repair_tick_value("EURUSD", 100_000, 0.00001, 0, 1.11921, "USD", {}) == pytest.approx(1)
+    assert repair_tick_value("EURUSDm#", 1_000, 0.00001, 0, 1.11921, "USD", {}) == pytest.approx(0.01)
+    # USDJPY profit is yen, so the same product is divided by the price.
+    usdjpy = repair_tick_value("USDJPY", 100_000, 0.001, 0, 144.336, "USD", {})
+    assert usdjpy == pytest.approx(100 / 144.336)
+    # A cross uses another pair from the same heartbeat.
+    eurgbp = repair_tick_value("EURGBP", 100_000, 0.00001, 0, 0.85, "USD", {"GBPUSD": 1.32})
+    assert eurgbp == pytest.approx(1.32)
+    # A reported tick value is kept, and an index is not guessed.
+    assert repair_tick_value("EURUSD", 100_000, 0.00001, 1.05, 1.11, "USD", {}) == pytest.approx(1.05)
+    assert repair_tick_value("US30Cash", 1, 0.1, 0, 42000, "USD", {}) == 0
 
 
 def test_status_sentences():

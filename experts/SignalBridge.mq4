@@ -4,7 +4,7 @@
 // Allow WebRequest for your desk URL under Tools → Options → Expert Advisors.
 
 #property copyright "Signal Desk"
-#property version   "1.13"
+#property version   "1.14"
 #property strict
 #property description "Places Signal Desk orders on the XM account this terminal is logged into."
 
@@ -22,6 +22,27 @@ input double SpreadWidenRatio = 0.15; // When the spread is this fraction of the
 
 string LastNote = "Starting.";
 string AccountKind = "";
+double SeenBalance = 0;
+double SeenEquity = 0;
+
+void RememberAccount()
+{
+   // A long symbol scan on a standard book makes these return 0 afterwards,
+   // so the last non-zero reading is kept.
+   double balance = AccountBalance();
+   double equity = AccountEquity();
+   double profit = AccountProfit();
+   double credit = AccountCredit();
+   if(balance <= 0.0)
+   {
+      double rebuilt = equity - profit - credit;
+      if(rebuilt > 0.0) balance = rebuilt;
+      else if(equity > 0.0) balance = equity;
+   }
+   if(balance > 0.0) SeenBalance = balance;
+   if(equity > 0.0) SeenEquity = equity;
+   else if(balance > 0.0) SeenEquity = balance;
+}
 
 void ReadAccountKind(string text)
 {
@@ -52,6 +73,7 @@ void OnTimer()
 
 void OnTick()
 {
+   RememberAccount();
    CheckBreakEven();
 }
 
@@ -241,8 +263,38 @@ string DigitsOnly(string text)
    return out;
 }
 
+double TickValueOf(string name)
+{
+   double direct = MarketInfo(name, MODE_TICKVALUE);
+   if(direct > 0.0) return direct;
+   double contract = MarketInfo(name, MODE_LOTSIZE);
+   double tick = MarketInfo(name, MODE_TICKSIZE);
+   if(contract <= 0.0 || tick <= 0.0) return 0.0;
+   double raw = contract * tick;
+   string profitCcy = SymbolInfoString(name, SYMBOL_CURRENCY_PROFIT);
+   string accountCcy = AccountCurrency();
+   StringToUpper(profitCcy);
+   StringToUpper(accountCcy);
+   if(StringLen(profitCcy) == 0 || profitCcy == accountCcy) return raw;
+   string toAccount = profitCcy + accountCcy;
+   string fromAccount = accountCcy + profitCcy;
+   double toBid = MarketInfo(toAccount, MODE_BID);
+   if(toBid > 0.0) return raw * toBid;
+   double fromBid = MarketInfo(fromAccount, MODE_BID);
+   if(fromBid <= 0.0 && StringFind(name, fromAccount) == 0)
+      fromBid = MarketInfo(name, MODE_BID);
+   if(fromBid > 0.0) return raw / fromBid;
+   return 0.0;
+}
+
 string Heartbeat()
 {
+   RememberAccount();
+   string login = IntegerToString(AccountNumber());
+   string broker = AccountServer();
+   string currency = AccountCurrency();
+   double balance = SeenBalance;
+   double equity = (SeenEquity > 0.0) ? SeenEquity : SeenBalance;
    string names[] = {
       "EURUSD","EURUSDm","EURUSDmicro","EURUSD#","EURUSDm#",
       "GBPUSD","GBPUSDm","GBPUSDmicro","GBPUSD#","GBPUSDm#",
@@ -280,7 +332,7 @@ string Heartbeat()
       if(!UseSymbol(name)) continue;
       double contract = MarketInfo(name, MODE_LOTSIZE);
       double tickSize = MarketInfo(name, MODE_TICKSIZE);
-      double tickValue = MarketInfo(name, MODE_TICKVALUE);
+      double tickValue = TickValueOf(name);
       if(contract <= 0 || tickSize <= 0) continue;
       NoteFxContract(name, contract, fxName, fxContract, microFxName, microFxContract);
       int digits = (int)MarketInfo(name, MODE_DIGITS);
@@ -303,7 +355,7 @@ string Heartbeat()
       if(!UseSymbol(alt)) continue;
       double contract = MarketInfo(alt, MODE_LOTSIZE);
       double tickSize = MarketInfo(alt, MODE_TICKSIZE);
-      double tickValue = MarketInfo(alt, MODE_TICKVALUE);
+      double tickValue = TickValueOf(alt);
       if(contract <= 0 || tickSize <= 0) continue;
       NoteFxContract(alt, contract, fxName, fxContract, microFxName, microFxContract);
       int digits = (int)MarketInfo(alt, MODE_DIGITS);
@@ -336,7 +388,7 @@ string Heartbeat()
       if(!hit) continue;
       double contract = MarketInfo(sym, MODE_LOTSIZE);
       double tickSize = MarketInfo(sym, MODE_TICKSIZE);
-      double tickValue = MarketInfo(sym, MODE_TICKVALUE);
+      double tickValue = TickValueOf(sym);
       if(contract <= 0 || tickSize <= 0) continue;
       NoteFxContract(sym, contract, fxName, fxContract, microFxName, microFxContract);
       int digits = (int)MarketInfo(sym, MODE_DIGITS);
@@ -358,11 +410,11 @@ string Heartbeat()
       fxContract = microFxContract;
    }
    return "platform=mt4\n"
-      + "login=" + IntegerToString(AccountNumber()) + "\n"
-      + "broker=" + AccountServer() + "\n"
-      + "balance=" + DoubleToString(AccountBalance(), 2) + "\n"
-      + "equity=" + DoubleToString(AccountEquity(), 2) + "\n"
-      + "currency=" + AccountCurrency() + "\n"
+      + "login=" + login + "\n"
+      + "broker=" + broker + "\n"
+      + "balance=" + DoubleToString(balance, 2) + "\n"
+      + "equity=" + DoubleToString(equity, 2) + "\n"
+      + "currency=" + currency + "\n"
       + "fx_contract=" + DoubleToString(fxContract, 2) + "\n"
       + "fx_symbol=" + fxName + "\n"
       + specs;

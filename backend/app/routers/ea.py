@@ -8,7 +8,7 @@ from app.ea_proto import OrderOut, format_orders, parse_execution, parse_heartbe
 from app.models import BrokerSpec, Delivery, Settings, Signal, User, utcnow
 from app.quotes import account_for_names, account_mismatch, anchor_levels, build_quote
 from app.security import current_ea_user
-from app.sizing import ANCHORED_GROUPS
+from app.sizing import ANCHORED_GROUPS, fx_legs, repair_tick_value
 from app.symbols import SYMBOLS, aliases_for, get_symbol
 
 _ANCHORED_IDS = tuple(spec.id for spec in SYMBOLS if spec.group in ANCHORED_GROUPS)
@@ -48,8 +48,16 @@ async def heartbeat(request: Request, user: User = Depends(current_ea_user), db:
     row.ea_platform = beat.platform or row.ea_platform
     row.account_login = beat.login or row.account_login
     row.broker = beat.broker or row.broker
-    row.balance = beat.balance
-    row.equity = beat.equity
+    # A standard-account scan can report 0 for both. Keep the last real balance.
+    balance = beat.balance
+    equity = beat.equity
+    if balance <= 0 < equity:
+        balance = equity
+    if balance <= 0 and equity <= 0 and row.balance is not None and row.balance > 0:
+        balance = row.balance
+        equity = row.equity if row.equity is not None else row.balance
+    row.balance = balance
+    row.equity = equity
     row.account_currency = beat.currency or row.account_currency
     if beat.fx_contract:
         row.fx_contract = beat.fx_contract
@@ -57,18 +65,37 @@ async def heartbeat(request: Request, user: User = Depends(current_ea_user), db:
     db.query(BrokerSpec).filter(BrokerSpec.user_id == user.id).delete()
     now = utcnow()
     seen: set[str] = set()
+    rates: dict[str, float] = {}
+    accepted = []
     for spec in beat.specs:
         key = spec.broker_symbol.upper()
         if not spec.broker_symbol or key in seen or spec.tick_size <= 0 or spec.contract_size <= 0:
             continue
         seen.add(key)
+        accepted.append(spec)
+        legs = fx_legs(spec.broker_symbol)
+        price = spec.bid if spec.bid > 0 else spec.ask
+        if legs is not None and price > 0:
+            rates[legs[0] + legs[1]] = price
+    currency = beat.currency or row.account_currency or "USD"
+    for spec in accepted:
+        price = spec.bid if spec.bid > 0 else spec.ask
+        tick_value = repair_tick_value(
+            spec.broker_symbol,
+            spec.contract_size,
+            spec.tick_size,
+            spec.tick_value,
+            price,
+            currency,
+            rates,
+        )
         db.add(
             BrokerSpec(
                 user_id=user.id,
                 broker_symbol=spec.broker_symbol,
                 contract_size=spec.contract_size,
                 tick_size=spec.tick_size,
-                tick_value=spec.tick_value,
+                tick_value=tick_value,
                 min_lot=spec.min_lot,
                 max_lot=spec.max_lot,
                 lot_step=spec.lot_step,

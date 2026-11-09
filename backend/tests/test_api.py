@@ -69,6 +69,50 @@ def _install_market(monkeypatch):  # type: ignore[no-untyped-def]
     return market
 
 
+def test_standard_heartbeat_keeps_a_real_balance_and_repairs_tick_value(client):
+    headers = _auth(client, "standard-balance@example.com")
+    saved = _save(client, headers, trade_mode="auto", account_type="standard", max_lot=1, planning_balance=1000)
+    key = {"X-Api-Key": saved["ea_key"]}
+    live = "\n".join(
+        [
+            "platform=mt5",
+            "login=1301983437",
+            "broker=XMGlobal-MT5 6",
+            "balance=2500.50",
+            "equity=2490",
+            "currency=USD",
+            "fx_contract=100000",
+            "fx_symbol=EURUSD",
+            "spec=EURUSD|100000|0.00001|0|0.01|500|0.01|5|1.11921|1.11936",
+            "spec=USDJPY|100000|0.001|0|0.01|500|0.01|3|144.336|144.444",
+        ]
+    )
+    assert client.post("/api/ea/heartbeat", content=live, headers=key).status_code == 200
+    home = client.get("/api/dashboard", headers=headers).json()
+    assert home["me"]["connection"]["balance"] == pytest.approx(2500.50)
+    assert home["me"]["connection"]["detected_account_type"] == "standard"
+
+    from sqlalchemy.orm import Session
+
+    from app.database import get_engine
+    from app.models import BrokerSpec
+
+    db = Session(get_engine())
+    try:
+        eurusd = db.query(BrokerSpec).filter(BrokerSpec.broker_symbol == "EURUSD").one()
+        usdjpy = db.query(BrokerSpec).filter(BrokerSpec.broker_symbol == "USDJPY").one()
+    finally:
+        db.close()
+    assert eurusd.tick_value == pytest.approx(1)
+    assert usdjpy.tick_value == pytest.approx(100 / 144.336)
+
+    blank = live.replace("balance=2500.50", "balance=0").replace("equity=2490", "equity=0")
+    assert client.post("/api/ea/heartbeat", content=blank, headers=key).status_code == 200
+    again = client.get("/api/dashboard", headers=headers).json()
+    assert again["me"]["connection"]["balance"] == pytest.approx(2500.50)
+    assert again["me"]["connection"]["equity"] == pytest.approx(2490)
+
+
 def test_register_login_and_rejects_auto_on_the_xm_app(client):
     headers = _auth(client)
     me = client.get("/api/me", headers=headers)
@@ -545,7 +589,7 @@ def test_download_and_markets(client):
     assert "WebRequest" in downloaded.text
     assert "LooksMicro" in downloaded.text
     assert "no-store" in downloaded.headers.get("cache-control", "")
-    assert downloaded.headers.get("x-copier-version") == "1.13"
+    assert downloaded.headers.get("x-copier-version") == "1.14"
     assert "attachment" in downloaded.headers.get("content-disposition", "")
     assert "etag" not in downloaded.headers
     assert client.get("/api/health").json()["ok"] is True

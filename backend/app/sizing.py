@@ -224,6 +224,61 @@ def lots_from_contract(
     return _finish(raw, loss_per_lot, contract, risk_cash, floor_min, lot_step, max_lot, currency, approximate)
 
 
+_FX = {"USD", "EUR", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD", "XAU", "XAG"}
+_FX_SUFFIXES = (".MICRO", "MICRO", "M#", ".M#", ".M", "#", "M")
+
+
+def fx_legs(symbol: str) -> tuple[str, str] | None:
+    """Base and quote of an FX or metal name, ignoring XM suffixes."""
+    name = (symbol or "").upper()
+    for suffix in _FX_SUFFIXES:
+        if name.endswith(suffix) and len(name) - len(suffix) >= 6:
+            name = name[: -len(suffix)]
+            break
+    letters = "".join(ch for ch in name if ch.isalpha())
+    if len(letters) < 6:
+        return None
+    base, quote = letters[:3], letters[3:6]
+    if base not in _FX or quote not in _FX:
+        return None
+    return base, quote
+
+
+def repair_tick_value(
+    symbol: str,
+    contract: float,
+    tick_size: float,
+    tick_value: float,
+    price: float,
+    account_currency: str,
+    rates: dict[str, float],
+) -> float:
+    """Fill a missing tick value for FX. XM often reports 0 on a standard book.
+
+    The result is in the account currency. A non-FX name is left alone, because
+    contract times tick size is not its money value.
+    """
+    if tick_value > 0 or contract <= 0 or tick_size <= 0:
+        return tick_value
+    legs = fx_legs(symbol)
+    if legs is None:
+        return tick_value
+    base, quote = legs
+    raw = contract * tick_size
+    account = (account_currency or "USD").upper()
+    if quote == account:
+        return raw
+    if base == account and price > 0:
+        return raw / price
+    to_account = rates.get(quote + account)
+    if to_account and to_account > 0:
+        return raw * to_account
+    from_account = rates.get(account + quote)
+    if from_account and from_account > 0:
+        return raw / from_account
+    return tick_value
+
+
 def detect_account_type(fx_contract: float | None) -> str | None:
     if fx_contract is None or fx_contract <= 0:
         return None

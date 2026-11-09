@@ -9,7 +9,7 @@
 // Orders are sent only when the website account is set to automatic.
 
 #property copyright "Signal Desk"
-#property version   "1.13"
+#property version   "1.14"
 #property description "Places Signal Desk orders on the XM account this terminal is logged into."
 
 input string ApiBase          = "https://fx.veespatial.com";
@@ -26,6 +26,27 @@ input double SpreadWidenRatio = 0.15; // When the spread is this fraction of the
 
 string LastNote = "Starting.";
 string AccountKind = "";
+double SeenBalance = 0;
+double SeenEquity = 0;
+
+void RememberAccount()
+{
+   // A long SymbolSelect scan on a standard book makes these return 0
+   // afterwards, so the last non-zero reading is kept.
+   double balance = AccountInfoDouble(ACCOUNT_BALANCE);
+   double equity = AccountInfoDouble(ACCOUNT_EQUITY);
+   double profit = AccountInfoDouble(ACCOUNT_PROFIT);
+   double credit = AccountInfoDouble(ACCOUNT_CREDIT);
+   if(balance <= 0.0)
+   {
+      double rebuilt = equity - profit - credit;
+      if(rebuilt > 0.0) balance = rebuilt;
+      else if(equity > 0.0) balance = equity;
+   }
+   if(balance > 0.0) SeenBalance = balance;
+   if(equity > 0.0) SeenEquity = equity;
+   else if(balance > 0.0) SeenEquity = balance;
+}
 
 void ReadAccountKind(const string text)
 {
@@ -56,6 +77,7 @@ void OnTimer()
 
 void OnTick()
 {
+   RememberAccount();
    CheckBreakEven();
 }
 
@@ -327,11 +349,39 @@ string DigitsOnly(const string text)
    return out;
 }
 
+double TickValueOf(const string name)
+{
+   double direct = SymbolInfoDouble(name, SYMBOL_TRADE_TICK_VALUE);
+   if(direct > 0.0) return direct;
+   double loss = SymbolInfoDouble(name, SYMBOL_TRADE_TICK_VALUE_LOSS);
+   if(loss > 0.0) return loss;
+   double gain = SymbolInfoDouble(name, SYMBOL_TRADE_TICK_VALUE_PROFIT);
+   if(gain > 0.0) return gain;
+   double contract = SymbolInfoDouble(name, SYMBOL_TRADE_CONTRACT_SIZE);
+   double tick = SymbolInfoDouble(name, SYMBOL_TRADE_TICK_SIZE);
+   if(contract <= 0.0 || tick <= 0.0) return 0.0;
+   double raw = contract * tick;
+   string profitCcy = SymbolInfoString(name, SYMBOL_CURRENCY_PROFIT);
+   string accountCcy = AccountInfoString(ACCOUNT_CURRENCY);
+   StringToUpper(profitCcy);
+   StringToUpper(accountCcy);
+   if(StringLen(profitCcy) == 0 || profitCcy == accountCcy) return raw;
+   string toAccount = profitCcy + accountCcy;
+   string fromAccount = accountCcy + profitCcy;
+   double toBid = SymbolInfoDouble(toAccount, SYMBOL_BID);
+   if(toBid > 0.0) return raw * toBid;
+   double fromBid = SymbolInfoDouble(fromAccount, SYMBOL_BID);
+   if(fromBid <= 0.0 && StringFind(name, fromAccount) == 0)
+      fromBid = SymbolInfoDouble(name, SYMBOL_BID);
+   if(fromBid > 0.0) return raw / fromBid;
+   return 0.0;
+}
+
 string SpecLine(const string name)
 {
    double contract = SymbolInfoDouble(name, SYMBOL_TRADE_CONTRACT_SIZE);
    double tickSize = SymbolInfoDouble(name, SYMBOL_TRADE_TICK_SIZE);
-   double tickValue = SymbolInfoDouble(name, SYMBOL_TRADE_TICK_VALUE);
+   double tickValue = TickValueOf(name);
    if(contract <= 0 || tickSize <= 0) return "";
    return "spec=" + name
       + "|" + DoubleToString(contract, 2)
@@ -348,6 +398,12 @@ string SpecLine(const string name)
 
 string Heartbeat()
 {
+   RememberAccount();
+   string login = IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN));
+   string broker = AccountInfoString(ACCOUNT_SERVER);
+   string currency = AccountInfoString(ACCOUNT_CURRENCY);
+   double balance = SeenBalance;
+   double equity = (SeenEquity > 0.0) ? SeenEquity : SeenBalance;
    string names[] = {
       "EURUSD","EURUSDm","EURUSDmicro","EURUSD#","EURUSDm#",
       "GBPUSD","GBPUSDm","GBPUSDmicro","GBPUSD#","GBPUSDm#",
@@ -436,11 +492,11 @@ string Heartbeat()
       specs += SpecLine(found);
    }
    return "platform=mt5\n"
-      + "login=" + IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)) + "\n"
-      + "broker=" + AccountInfoString(ACCOUNT_SERVER) + "\n"
-      + "balance=" + DoubleToString(AccountInfoDouble(ACCOUNT_BALANCE), 2) + "\n"
-      + "equity=" + DoubleToString(AccountInfoDouble(ACCOUNT_EQUITY), 2) + "\n"
-      + "currency=" + AccountInfoString(ACCOUNT_CURRENCY) + "\n"
+      + "login=" + login + "\n"
+      + "broker=" + broker + "\n"
+      + "balance=" + DoubleToString(balance, 2) + "\n"
+      + "equity=" + DoubleToString(equity, 2) + "\n"
+      + "currency=" + currency + "\n"
       + "fx_contract=" + DoubleToString(fxContract, 2) + "\n"
       + "fx_symbol=" + fxName + "\n"
       + specs;
