@@ -19,7 +19,7 @@ input int    Magic            = 56021;
 input int    SlippagePoints   = 30;
 input int    MaxSpreadPoints  = 40;
 input double MaxLots          = 0; // 0 = no extra ceiling. The website max lot still applies.
-input double BreakEvenProfitUSD = 4.0; //4.0 Floating profit that moves the stop to the entry price. 0 = off.
+input double BreakEvenProfitUSD = 0; //4.0 Floating profit that moves the stop to the entry price. 0 = off.
 input double LockProfitTriggerUSD = 0; //5.0 Floating profit that locks a winner. 0 = off.
 input double LockProfitUSD = 1.0; // Profit the stop locks in once the trigger is reached.
 input double SpreadWidenRatio = 0.15; // When the spread is this fraction of the stop, push the stop out by the spread.
